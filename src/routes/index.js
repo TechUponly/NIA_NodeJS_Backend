@@ -6,6 +6,8 @@ const authController = require("../controllers/authController");
 const hrPolicyController = require("../controllers/hrPolicyController");
 const adminAccessController = require("../controllers/adminAccessController");
 const announcementController = require("../controllers/announcementController");
+const holidayController = require("../controllers/holidayController");
+const birthdayController = require("../controllers/birthdayController");
 // ========================================
 // HEALTH CHECK ROUTES
 // ========================================
@@ -45,6 +47,10 @@ router.post("/hr/hr-policies-concern", hrPolicyController.getPolicyConcerns);
 // ERROR HANDLING ROUTES
 // ========================================
 router.get("/get-announcement", announcementController.getAnnouncements);
+router.get("/get-holidays", holidayController.getHolidays);
+router.get("/get-birthdays", birthdayController.getBirthdays);
+router.get("/get-birthday-wishes", birthdayController.getWishes);
+router.post("/send-birthday-wish", birthdayController.submitWish);
 
 // 404 handler for API routes
 router.use("*", (req, res) => {

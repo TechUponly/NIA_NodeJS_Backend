@@ -66,6 +66,7 @@ app.get("/", (req, res) => {
 });
 
 app.use('/Announcement', express.static(path.join(__dirname, '../Announcement')));
+app.use('/admin/Upload', express.static(path.join(__dirname, '../admin/Upload')));
 
 // API routes
 app.use("/", routes);
