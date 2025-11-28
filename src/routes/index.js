@@ -16,10 +16,10 @@ router.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     version: "1.0.0",
     endpoints: {
-      auth: "/api/v1/auth",
-      hr: "/api/v1/hr",
-      admin: "/api/v1/admin",
-      health: "/api/v1/health",
+      auth: "/auth",
+      hr: "/hr",
+      admin: "/admin",
+      health: "/health",
     },
   });
 });
@@ -57,15 +57,15 @@ router.use("*", (req, res) => {
     path: req.originalUrl,
     timestamp: new Date().toISOString(),
     availableEndpoints: {
-      health: ["GET /api/v1/health"],
+      health: ["GET /health"],
       auth: [
-        "GET /api/v1/auth/login",
-        "GET /api/v1/auth/profile/:empId",
-        "POST /api/v1/auth/logout",
-        "GET /api/v1/auth/validate-session",
+        "GET /auth/login",
+        "GET /auth/profile/:empId",
+        "POST /auth/logout",
+        "GET /auth/validate-session",
       ],
-      admin: ["GET /api/v1/admin/admin-access-pages"],
-      hr: ["POST /api/v1/hr/hr-policies-concern"],
+      admin: ["GET /admin/admin-access-pages"],
+      hr: ["POST /hr/hr-policies-concern"],
     },
   });
 });
