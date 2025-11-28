@@ -54,10 +54,10 @@ app.get("/", (req, res) => {
       "Health Monitoring",
     ],
     endpoints: {
-      health: "/api/v1/health",
-      auth: "/api/v1/auth/*",
-      admin: "/api/v1/admin/*",
-      hr: "/api/v1/hr/*",
+      health: "/health",
+      auth: "/auth/*",
+      admin: "/admin/*",
+      hr: "/hr/*",
     },
   });
 });
@@ -110,6 +110,75 @@ const startServer = async () => {
       process.exit(1);
     }
 
+    app.listen(PORT, HOST, () => {
+      const networkInterfaces = getNetworkInterfaces();
+
+      console.log("🚀 HRMS API Server Details:");
+      console.log(`   📍 Local: http://localhost:${PORT}`);
+      console.log(`   📍 Health: http://localhost:${PORT}/health`);
+      console.log(`   🔐 Auth API: http://localhost:${PORT}/auth`);
+      console.log(`   👨‍💼 Admin API: http://localhost:${PORT}/admin`);
+      console.log(`   📋 HR API: http://localhost:${PORT}/hr`);
+
+      console.log("🔗 Key Endpoints:");
+      console.log(`   • Login: GET http://localhost:${PORT}/auth/login`);
+      console.log(
+        `   • Profile: GET http://localhost:${PORT}/auth/profile/:empId`
+      );
+      console.log(
+        `   • Logout: POST http://localhost:${PORT}/auth/logout`
+      );
+      console.log(
+        `   • Admin Access: GET http://localhost:${PORT}/admin/admin-access-pages`
+      );
+      console.log(
+        `   • HR Policies: POST http://localhost:${PORT}/hr/hr-policies-concern`
+      );
+
+      if (networkInterfaces.length > 0) {
+        console.log("\n🌐 Network Access:");
+        networkInterfaces.forEach((net) => {
+          console.log(`   📡 ${net.interface}: http://${net.address}:${PORT}`);
+          console.log(
+            `   🔐 Auth API: http://${net.address}:${PORT}/auth`
+          );
+          console.log(
+            `   👨‍💼 Admin API: http://${net.address}:${PORT}/admin`
+          );
+          console.log(`   📋 HR API: http://${net.address}:${PORT}/hr`);
+        });
+
+        console.log("\n📱 For Mobile/External Access:");
+        console.log(`   🔗 Use any of the above IP addresses`);
+        console.log(`   🔒 Make sure firewall allows port ${PORT}`);
+      }
+
+      console.log(`\n🌍 Environment: ${process.env.NODE_ENV || "development"}`);
+      console.log(`💾 Database: ${process.env.DB_NAME || "uat_hrms_nia"}`);
+      console.log("📦 API Features:");
+      console.log("   ✅ PHP-Compatible Authentication");
+      console.log("   ✅ Admin Access Management");
+      console.log("   ✅ HR Policy Management");
+      console.log("   ✅ Network Access Support");
+      console.log("   ✅ Request Logging & Error Handling");
+      console.log("✅ Server is ready to accept connections");
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("\n💡 Tips for Testing:");
+        console.log(
+          `   • Login: curl "http://localhost:${PORT}/auth/login?t1=C001&t2=pass&user_type=Employee"`
+        );
+        console.log(
+          `   • Health: curl "http://localhost:${PORT}/health"`
+        );
+        console.log(
+          `   • Admin Access: curl "http://localhost:${PORT}/admin/admin-access-pages?emp_id=C001"`
+        );
+        console.log(
+          `   • HR Policy: curl -X POST "http://localhost:${PORT}/hr/hr-policies-concern" -H "Content-Type: application/json" -d '{"empId":"C001"}'`
+        );
+      }
+    });
   } catch (error) {
     console.error("❌ Failed to start server:", error);
     process.exit(1);
