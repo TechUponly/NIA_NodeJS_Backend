@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const os = require("os");
 require("dotenv").config();
+const path = require('path');
 
 const { testConnection } = require("./config/database");
 const routes = require("./routes");
@@ -14,7 +15,9 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0"; // Bind to all interfaces
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // CORS configuration - Allow all origins for network access
 app.use(
@@ -61,6 +64,8 @@ app.get("/", (req, res) => {
     },
   });
 });
+
+app.use('/Announcement', express.static(path.join(__dirname, '../Announcement')));
 
 // API routes
 app.use("/", routes);
