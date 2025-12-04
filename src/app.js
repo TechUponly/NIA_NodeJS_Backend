@@ -4,11 +4,14 @@ const helmet = require("helmet");
 const os = require("os");
 require("dotenv").config();
 const path = require('path');
+const fs = require('fs');
 
 const { testConnection } = require("./config/database");
 const routes = require("./routes");
 const { requestLogger } = require("./middleware/logger");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
+const cron = require('node-cron');
+const yearEndService = require('./services/yearEndService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,9 +70,50 @@ app.get("/", (req, res) => {
 
 app.use('/Announcement', express.static(path.join(__dirname, '../Announcement')));
 app.use('/admin/Upload', express.static(path.join(__dirname, '../admin/Upload')));
+app.use('/admin/leave_docs', express.static(path.join(__dirname, '../uploads/leave_docs')));
+
+const leaveDocsPath = path.join(__dirname, '../admin/leave_docs');
+
+// Second: Check if folder exists (Debug info)
+if (fs.existsSync(leaveDocsPath)) {
+    console.log(`Serving Leave Docs from: ${leaveDocsPath}`);
+} else {
+    console.log(`Folder NOT FOUND: ${leaveDocsPath}`);
+    console.log(`(Make sure you created the folder 'leave_docs' inside 'admin')`);
+}
+
+// Third: Serve the folder
+app.use('/admin/leave_docs', express.static(leaveDocsPath));
 
 // API routes
 app.use("/", routes);
+
+
+// ========================================
+// ⏰ AUTOMATIC CRON JOBS
+// ========================================
+
+// Schedule: 00:00 (Midnight) on 1st January (Month 1)
+cron.schedule("0 0 1 1 *", async () => {
+  console.log("\n AUTO-TRIGGER: Starting Annual Year End Leave Processing...");
+  console.log("Date:", new Date().toISOString());
+
+  try {
+    // Run the service logic
+    const result = await yearEndService.processYearEnd();
+    
+    console.log("AUTO-TRIGGER SUCCESS:");
+    console.log(`Processed: ${result.processed_count} employees`);
+    console.log(`Errors: ${result.errors.length}`);
+    if (result.errors.length > 0) {
+      console.log("Error Details:", result.errors);
+    }
+  } catch (error) {
+    console.error("❌ AUTO-TRIGGER FAILED:", error);
+  }
+});
+console.log("Cron Job Scheduled: Year End Processing set for Jan 1st at 00:00");
+
 
 // Error handling middleware (must be after routes)
 app.use(notFound);
