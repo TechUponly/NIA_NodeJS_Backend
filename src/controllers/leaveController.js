@@ -2,52 +2,71 @@ const leaveService = require("../services/leaveService");
 const emailService = require("../services/emailService");
 const { pool } = require("../config/database");
 
+// Helper: JSON to CSV
+const convertToCSV = (arr) => {
+  if (!arr || !arr.length) return "";
+  const headers = Object.keys(arr[0]).join(",");
+  const rows = arr.map((obj) =>
+    Object.values(obj)
+      .map((val) => `"${String(val === null ? "" : val).replace(/"/g, '""')}"`)
+      .join(",")
+  );
+  return [headers, ...rows].join("\n");
+};
+
 // ==========================================
 // 1. GET LEAVE HISTORY
 // ==========================================
 const getLeaveHistory = async (req, res) => {
   try {
     const { emp_id, date } = req.body;
-
-    if (!emp_id || !date) {
-      return res.status(200).json({ status: false, message: "Missing Parameters" });
-    }
+    if (!emp_id || !date)
+      return res
+        .status(200)
+        .json({ status: false, message: "Missing Parameters" });
 
     const rawData = await leaveService.getEmployeeLeavesByMonth(emp_id, date);
 
     if (rawData.length > 0) {
       const protocol = req.protocol;
-      const host = req.get('host');
+      const host = req.get("host");
       const baseUrl = `${protocol}://${host}`;
-
-      const formatToDayMonth = (dateStr) => {
-        return new Date(dateStr).toLocaleString('en-US', { 
-          weekday: 'short', month: 'short', day: '2-digit' 
+      const formatToDayMonth = (dateStr) =>
+        new Date(dateStr).toLocaleString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "2-digit",
         });
-      };
 
       const formattedData = rawData.map((row) => {
-        const fdateObj = new Date(row.fdate);
-        const tdateObj = new Date(row.tdate);
-        const daysCount = (row.no_of_days && row.no_of_days > 0) ? parseFloat(row.no_of_days) : 1;
-
+        const daysCount =
+          row.no_of_days && row.no_of_days > 0 ? parseFloat(row.no_of_days) : 1;
         let periodDisplay = "";
         if (daysCount === 0.5) {
-          const shiftLabel = (row.shift_type === '2') ? "(2nd Half)" : "(1st Half)";
+          const shiftLabel =
+            row.shift_type === "2" ? "(2nd Half)" : "(1st Half)";
           periodDisplay = `${formatToDayMonth(row.fdate)} ${shiftLabel}`;
-        } else if (fdateObj.getTime() === tdateObj.getTime()) {
+        } else if (
+          new Date(row.fdate).getTime() === new Date(row.tdate).getTime()
+        ) {
           periodDisplay = formatToDayMonth(row.fdate);
         } else {
-          periodDisplay = `${formatToDayMonth(row.fdate)} to ${formatToDayMonth(row.tdate)}`;
+          periodDisplay = `${formatToDayMonth(row.fdate)} to ${formatToDayMonth(
+            row.tdate
+          )}`;
         }
 
-        const filename = row.document_path ? row.document_path.split(/[/\\]/).pop() : null;
-        const docUrl = filename ? `${baseUrl}/admin/leave_docs/${filename}` : null;
+        const filename = row.document_path
+          ? row.document_path.split(/[/\\]/).pop()
+          : null;
+        const docUrl = filename
+          ? `${baseUrl}/admin/leave_docs/${filename}`
+          : null;
 
         return {
           leave_id: row.leave_id,
           ltype: row.ltype,
-          fdate: formatToDayMonth(row.apply_date), 
+          fdate: formatToDayMonth(row.apply_date),
           days: periodDisplay,
           dayscount: daysCount,
           comment: row.comment,
@@ -55,13 +74,16 @@ const getLeaveHistory = async (req, res) => {
           l_status: row.l_status,
           admincomment: row.admincomment,
           approved_date: row.approved_date,
-          document: docUrl
+          document: docUrl,
         };
       });
-
-      res.status(200).json({ status: true, message: "Data Found", data: formattedData });
+      res
+        .status(200)
+        .json({ status: true, message: "Data Found", data: formattedData });
     } else {
-      res.status(200).json({ status: false, message: "No Data Available", data: [] });
+      res
+        .status(200)
+        .json({ status: false, message: "No Data Available", data: [] });
     }
   } catch (error) {
     console.error("Error in getLeaveHistory:", error);
@@ -70,263 +92,318 @@ const getLeaveHistory = async (req, res) => {
 };
 
 // ==========================================
-// 2. APPLY FOR LEAVE (Strict Logic)
+// 2. APPLY FOR LEAVE
 // ==========================================
 const applyLeave = async (req, res) => {
   try {
     const input = req.body;
-    
-    // 1. Basic Validation
-    if (!input.emp_id || !input.ltype || !input.fromdate || !input.todate) {
-      return res.status(200).json({ success: false, message: "Missing required fields" });
-    }
+    if (!input.emp_id || !input.ltype || !input.fromdate || !input.todate)
+      return res
+        .status(200)
+        .json({ success: false, message: "Missing required fields" });
 
-    const isHalfDay = input.is_half_day === '1' || input.is_half_day === true;
-    let fromDate = new Date(input.fromdate);
-    let toDate = new Date(input.todate);
-    const ltype = input.ltype;
-
-    // 2. Fetch Employee Details
     const emp = await leaveService.getEmployeeDetails(input.emp_id);
-    if (!emp) {
-      return res.status(200).json({ success: false, message: "Employee not found" });
-    }
+    if (!emp)
+      return res
+        .status(200)
+        .json({ success: false, message: "Employee not found" });
 
     const actualEmpId = emp.emp_id;
-    const joinDate = new Date(emp.joindate);
-    const isSaturdayWorking = emp.is_saturday_working ? emp.is_saturday_working.trim().toUpperCase() : 'NO';
-    const gender = emp.gender ? emp.gender.toUpperCase() : 'MALE';
+    const employeeType = emp.employee_type || "Core";
+    const ltype = input.ltype;
+    const gender = emp.gender ? emp.gender.toUpperCase() : "MALE";
 
-    // 3. Probation Logic
-    const probationEndDate = new Date(joinDate);
-    probationEndDate.setFullYear(probationEndDate.getFullYear() + 1);
-    
-    // Calculate Days Worked
+    // 1. RULES CHECK
+    const rules = await leaveService.getLeaveConfiguration(employeeType);
+    const rule = rules.find((r) => ltype.includes(r.leave_type));
+
+    if (!rule && !ltype.includes("LWP") && !ltype.includes("Extraordinary")) {
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message: `Leave type '${ltype}' is not applicable for ${employeeType} employees.`,
+        });
+    }
+
+    const isHalfDay = input.is_half_day === "1" || input.is_half_day === true;
+    let fromDate = new Date(input.fromdate);
+    let toDate = new Date(input.todate);
+    const joinDate = new Date(emp.joindate);
+    const isSaturdayWorking = emp.is_saturday_working
+      ? emp.is_saturday_working.trim().toUpperCase()
+      : "NO";
+
+    // Probation Check
+    const isProbation = employeeType === "Core Probation";
     const diffTime = Math.abs(fromDate - joinDate);
     const daysWorkedTotal = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    
-    const isProbation = new Date() <= probationEndDate;
 
-    // 4. Calculate Deductible Days
+    // Deductible Days Calculation
     let deductibleDays = 0;
-
     if (isHalfDay) {
       deductibleDays = 0.5;
-      toDate = fromDate; 
+      toDate = fromDate;
     } else {
-      // Casual Leave: Exclude Sundays and Holidays logic
-      if (ltype.includes('Casual') && !ltype.includes('Special')) {
+      if (ltype.includes("Casual") && !ltype.includes("Special")) {
+        // CL: Skip Sundays & Non-working Saturdays
         let current = new Date(fromDate);
         const end = new Date(toDate);
-        
         while (current <= end) {
-          const dayOfWeek = current.getDay(); // 0 = Sunday, 6 = Saturday
-          
-          let countDay = true;
-          if (dayOfWeek === 0) countDay = false; // Skip Sunday
-          if (dayOfWeek === 6 && isSaturdayWorking !== 'YES') countDay = false; // Skip Sat if not working
-
-          if (countDay) deductibleDays++;
-          
+          const dayOfWeek = current.getDay();
+          if (
+            dayOfWeek !== 0 &&
+            !(dayOfWeek === 6 && isSaturdayWorking !== "YES")
+          )
+            deductibleDays++;
           current.setDate(current.getDate() + 1);
         }
       } else {
-        // PL, SL, Mat, Pat: Include all intervening days
         const diff = Math.abs(toDate - fromDate);
         deductibleDays = Math.ceil(diff / (1000 * 60 * 60 * 24)) + 1;
       }
     }
 
-    // 5. VALIDATION RULES (Matching NIA Policy)
-
-    // A. Probation Check
-    if (isProbation && (ltype.includes('Privilege') || ltype.includes('Sick'))) {
-      return res.status(200).json({ success: false, message: "Probation Rule: Privilege and Sick Leave are not allowed during probation." });
+    // Validations (Limits)
+    if (rule) {
+      if (rule.max_per_request > 0 && deductibleDays > rule.max_per_request)
+        return res
+          .status(200)
+          .json({
+            success: false,
+            message: `${ltype} cannot exceed ${rule.max_per_request} days at a time.`,
+          });
+      if (rule.min_per_request > 0 && deductibleDays < rule.min_per_request)
+        return res
+          .status(200)
+          .json({
+            success: false,
+            message: `${ltype} must be a minimum of ${rule.min_per_request} days.`,
+          });
     }
 
-    // B. Casual Leave Max Limit
-    if (ltype.includes('Casual') && !ltype.includes('Special') && deductibleDays > 5) {
-      return res.status(200).json({ success: false, message: "Casual Leave cannot exceed 5 consecutive days." });
-    }
+    // Strict probation blocks
+    if (isProbation && (ltype.includes("Privilege") || ltype.includes("Sick")))
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message: "Probation Rule: Privilege/Sick Leave not allowed.",
+        });
 
-    // C. Privilege Leave Min Limit
-    if (ltype.includes('Privilege') && deductibleDays < 5) {
-      return res.status(200).json({ success: false, message: "Privilege Leave must be a minimum of 5 days." });
-    }
+    // Gender blocks
+    if (ltype.includes("Maternity") && gender !== "FEMALE")
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message: "Maternity Leave is only for Female employees.",
+        });
+    if (ltype.includes("Paternity") && gender !== "MALE")
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message: "Paternity Leave is only for Male employees.",
+        });
 
-    // D. Gender Checks
-    if (ltype.includes('Maternity') && gender !== 'FEMALE') {
-      return res.status(200).json({ success: false, message: "Maternity Leave is only for Female employees." });
-    }
-    if (ltype.includes('Paternity') && gender !== 'MALE') {
-      return res.status(200).json({ success: false, message: "Paternity Leave is only for Male employees." });
-    }
-
-    // 6. BALANCE & LIMIT CHECK
+    // Balance Check
     const currentYear = fromDate.getFullYear();
-    const isLifetimeLeave = ltype.includes('Maternity') || ltype.includes('Paternity') || ltype.includes('SCL') || ltype.includes('Special');
-
-    // Determine Check Range
-    let checkStart = `${currentYear}-01-01`;
-    let checkEnd = `${currentYear}-12-31`;
+    const isLifetimeLeave =
+      ltype.includes("Maternity") ||
+      ltype.includes("Paternity") ||
+      ltype.includes("SCL");
+    let checkStart = `${currentYear}-01-01`,
+      checkEnd = `${currentYear}-12-31`;
     if (isLifetimeLeave) {
-      checkStart = new Date(emp.joindate).toISOString().split('T')[0];
-      checkEnd = '2099-12-31';
+      checkStart = new Date(emp.joindate).toISOString().split("T")[0];
+      checkEnd = "2099-12-31";
     }
 
-    // Fetch Usage via Service
-    const [usedRows] = await pool.execute(`
-      SELECT SUM(no_of_days) as used 
-      FROM leave_app 
-      WHERE emp_id = ? AND ltype = ? AND l_status != 'Rejected'
-      AND ((fdate BETWEEN ? AND ?) OR (tdate BETWEEN ? AND ?))
-    `, [actualEmpId, ltype, checkStart, checkEnd, checkStart, checkEnd]);
-    
+    const [usedRows] = await pool.execute(
+      `
+      SELECT SUM(no_of_days) as used FROM leave_app WHERE emp_id = ? AND ltype = ? AND l_status != 'Rejected' AND ((fdate BETWEEN ? AND ?) OR (tdate BETWEEN ? AND ?))
+    `,
+      [actualEmpId, ltype, checkStart, checkEnd, checkStart, checkEnd]
+    );
+
     const usedSoFar = usedRows[0].used ? parseFloat(usedRows[0].used) : 0;
+    const balanceRow = await leaveService.getOpeningBalance(
+      actualEmpId,
+      currentYear
+    );
 
-    // Fetch Opening Balance
-    const balanceRow = await leaveService.getOpeningBalance(actualEmpId, currentYear);
-
-    // --- Strict Balance Logic ---
     let errorMsg = "";
+    let dynamicLimit = rule ? parseFloat(rule.annual_limit) : 0;
 
-    if (ltype.includes('Sick')) {
-      // SICK LEAVE (Units Logic: 1 Day = 2 Units)
-      const OP_SL = balanceRow ? parseFloat(balanceRow.sl_opening) : 20;
+    if (ltype.includes("Sick")) {
+      // Sick Leave Units (1 Day = 2 Units)
+      const OP_SL = balanceRow
+        ? parseFloat(balanceRow.sl_opening)
+        : dynamicLimit;
       const unitsLimit = isProbation ? 0 : OP_SL;
-      
-      const unitsUsed = usedSoFar * 2;
-      const unitsRequested = deductibleDays * 2;
-
-      if ((unitsUsed + unitsRequested) > unitsLimit) {
-        const leftUnits = Math.max(unitsLimit - unitsUsed, 0);
-        const leftDays = leftUnits / 2;
-        errorMsg = `Insufficient Sick Leave. Balance: ${leftUnits} Units (${leftDays} Days).`;
+      if (usedSoFar * 2 + deductibleDays * 2 > unitsLimit)
+        errorMsg = `Insufficient Sick Leave. Balance: ${Math.max(
+          unitsLimit - usedSoFar * 2,
+          0
+        )} Units.`;
+    } else if (ltype.includes("Casual") && !ltype.includes("Special")) {
+      const OP_CL = balanceRow
+        ? parseFloat(balanceRow.cl_opening)
+        : dynamicLimit;
+      let limit = OP_CL;
+      // Pro-rata for Probation/Contractual
+      if (isProbation || employeeType === "Contractual")
+        limit = Math.floor(daysWorkedTotal / 45);
+      if (usedSoFar + deductibleDays > limit)
+        errorMsg = `Insufficient Casual Leave. Available: ${Math.max(
+          limit - usedSoFar,
+          0
+        )} days.`;
+    } else if (ltype.includes("Privilege")) {
+      const OP_PL = balanceRow
+        ? parseFloat(balanceRow.pl_opening)
+        : dynamicLimit;
+      let limit = OP_PL;
+      if (employeeType === "Contractual") {
+        const monthsService = Math.floor(daysWorkedTotal / 30);
+        limit = Math.min(OP_PL, monthsService * 1);
       }
-
-    } else if (ltype.includes('Casual') && !ltype.includes('Special')) {
-      // CASUAL LEAVE
-      const OP_CL = balanceRow ? parseFloat(balanceRow.cl_opening) : 8;
-      const limit = isProbation ? Math.floor(daysWorkedTotal / 45) : OP_CL;
-
-      if ((usedSoFar + deductibleDays) > limit) {
-        const left = Math.max(limit - usedSoFar, 0);
-        errorMsg = `Insufficient Casual Leave. Available: ${left} days.`;
-      }
-
-    } else if (ltype.includes('Privilege')) {
-      // PRIVILEGE LEAVE
-      const OP_PL = balanceRow ? parseFloat(balanceRow.pl_opening) : 0;
-      const limit = isProbation ? 0 : OP_PL;
-
-      if ((usedSoFar + deductibleDays) > limit) {
-        const left = Math.max(limit - usedSoFar, 0);
-        errorMsg = `Insufficient Privilege Leave. Available: ${left} days.`;
-      }
-
-    } else if (ltype.includes('Maternity')) {
-      // MATERNITY
-      if (ltype.includes('Pregnancy')) {
-        if (deductibleDays > 180) errorMsg = "Maternity (Pregnancy) max 180 days per occasion.";
-        else if ((usedSoFar + deductibleDays) > 360) errorMsg = "Lifetime Maternity limit (360 days) exceeded.";
-      } else if (ltype.includes('Abortion')) {
-        if ((usedSoFar + deductibleDays) > 45) errorMsg = "Lifetime Abortion/Miscarriage limit (45 days) exceeded.";
-      }
-    } else if (ltype.includes('Paternity')) {
-      if (deductibleDays > 15) errorMsg = "Paternity leave max 15 days.";
-    } else if (ltype.includes('Vasectomy')) {
-      // Dynamic SCL limit
-      const limit = (usedSoFar >= 6) ? 12 : 6;
-      if (deductibleDays > (limit - usedSoFar)) errorMsg = "Vasectomy limit exceeded.";
+      if (usedSoFar + deductibleDays > limit)
+        errorMsg = `Insufficient Privilege Leave. Available: ${Math.max(
+          limit - usedSoFar,
+          0
+        )} days.`;
+    } else {
+      // Generic Check
+      if (rule && usedSoFar + deductibleDays > dynamicLimit)
+        errorMsg = `Limit Exceeded for ${ltype}. Allowed: ${dynamicLimit}, Used: ${usedSoFar}.`;
     }
 
-    if (errorMsg && !ltype.includes('LWP')) {
+    if (errorMsg && !ltype.includes("LWP") && !ltype.includes("Extraordinary"))
       return res.status(200).json({ success: false, message: errorMsg });
-    }
 
-    // 7. File Upload Path & Validation
-    const requiresFile = (ltype.includes('Sick') && deductibleDays > 1) || 
-                         ltype.includes('Maternity') || 
-                         ltype.includes('Paternity') || 
-                         ltype.includes('SCL') || 
-                         ltype.includes('Special');
-
+    // File Upload Requirement
+    const requiresFile =
+      (ltype.includes("Sick") && deductibleDays > 1) ||
+      ltype.includes("Maternity") ||
+      ltype.includes("Paternity") ||
+      ltype.includes("SCL");
     let filePath = null;
-    if (req.file) {
-      filePath = req.file.path.replace(/\\/g, "/"); 
-    } else if (requiresFile) {
-      return res.status(200).json({ success: false, message: "Medical Certificate/Document is mandatory for this request." });
-    }
+    if (req.file) filePath = req.file.path.replace(/\\/g, "/");
+    else if (requiresFile)
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message:
+            "Medical Certificate/Document is mandatory for this request.",
+        });
 
-    // 8. Insert into Database
+    // Insert into DB
     const leaveData = {
       emp_id: actualEmpId,
       ltype: ltype,
-      fdate: fromDate.toISOString().split('T')[0],
-      tdate: toDate.toISOString().split('T')[0],
-      comment: input.comments || '',
+      fdate: fromDate.toISOString().split("T")[0],
+      tdate: toDate.toISOString().split("T")[0],
+      comment: input.comments || "",
       document_path: filePath,
       no_of_days: deductibleDays,
-      shift_type: input.shift_type || null
+      shift_type: input.shift_type || null,
     };
-
     await leaveService.applyLeave(leaveData);
 
-    // 9. Send Email Notifications
+    // Email
     try {
       const userEmail = emp.email;
-      const managerEmail = await leaveService.getEmployeeEmail(emp.reporting_manager);
+      const managerEmail = await leaveService.getEmployeeEmail(
+        emp.reporting_manager
+      );
       const directorEmails = await leaveService.getDirectorEmails();
-
-      const recipients = [...new Set([userEmail, managerEmail, ...directorEmails].filter(e => e))];
-
+      const recipients = [
+        ...new Set(
+          [userEmail, managerEmail, ...directorEmails].filter((e) => e)
+        ),
+      ];
       if (recipients.length > 0) {
-        emailService.sendLeaveNotification({
-          empName: emp.ename, empCode: emp.usercode,
-          ltype: leaveData.ltype, fdate: leaveData.fdate, tdate: leaveData.tdate,
-          no_of_days: leaveData.no_of_days, comment: leaveData.comment
-        }, recipients);
+        emailService.sendLeaveNotification(
+          {
+            empName: emp.ename,
+            empCode: emp.usercode,
+            ltype: leaveData.ltype,
+            fdate: leaveData.fdate,
+            tdate: leaveData.tdate,
+            no_of_days: leaveData.no_of_days,
+            comment: leaveData.comment,
+          },
+          recipients
+        );
       }
-    } catch (e) { console.error("Email failed", e.message); }
+    } catch (e) {
+      console.error("Email failed", e.message);
+    }
 
-    res.status(200).json({ success: true, message: "Leave applied Successfully" });
-
+    res
+      .status(200)
+      .json({ success: true, message: "Leave applied Successfully" });
   } catch (error) {
     console.error("Error applying leave:", error);
-    res.status(500).json({ success: false, message: "Database Error: " + error.message });
+    res
+      .status(500)
+      .json({ success: false, message: "Database Error: " + error.message });
   }
 };
 
 // ==========================================
-// 3. GET MANAGER/DIRECTOR LEAVES
+// 3. GET MANAGER LEAVES
 // ==========================================
 const getManagerLeaves = async (req, res) => {
   try {
     const { emp_id } = req.query; 
+    console.log(`\n🔎 FETCHING APPROVALS for: ${emp_id}`);
 
     if (!emp_id) {
       return res.status(400).json({ success: false, message: "Missing emp_id" });
     }
 
+    // A. Get Approver Info
     const approver = await leaveService.getApproverInfo(emp_id);
+    
     if (!approver) {
+      console.log("❌ Approver not found in DB");
       return res.status(200).json([]);
     }
 
     const dbEmpId = approver.emp_id;
+    const dbUserCode = approver.usercode || emp_id;
+    const dbName = approver.ename; // We need this for the Name check
+    
     const userPost = approver.post || "";
     const isDirector = userPost.toLowerCase().includes("director");
+    
+    console.log(`   Approver: ${dbName} (ID: ${dbEmpId}, Code: ${dbUserCode})`);
+
     let teamIds = null;
 
+    // B. Get Team Members
+    // UPDATED: Pass ID, Code, AND Name
     if (!isDirector) {
-      teamIds = await leaveService.getTeamIds(dbEmpId);
+      teamIds = await leaveService.getTeamIds(dbEmpId, dbUserCode, dbName);
+      
+      console.log(`   Team IDs found: ${teamIds || "None"}`);
+      
       if (!teamIds) {
+        // Debugging hint for you in the server console
+        console.log("   ⚠️  No employees found where reporting_manager matches ID, Code, or Name.");
         return res.status(200).json([]);
       }
     }
 
+    // C. Fetch Data
     const rawData = await leaveService.getPendingLeavesForApprover(isDirector, teamIds);
+    console.log(`   Leaves Found: ${rawData.length}`);
 
+    // D. Format Data
     const protocol = req.protocol;
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
@@ -352,154 +429,128 @@ const getManagerLeaves = async (req, res) => {
     res.status(200).json(formattedData);
 
   } catch (error) {
-    console.error("Error in getManagerLeaves:", error);
+    console.error("❌ Error in getManagerLeaves:", error);
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
 // ==========================================
-// 4. UPDATE LEAVE STATUS (Approve/Reject)
+// 4. PROCESS LEAVE UPDATE
 // ==========================================
 const processLeaveUpdate = async (req, res) => {
   try {
     const input = { ...req.query, ...req.body };
     const { leave_id, status, comments, emp_id } = input;
-
-    if (!leave_id || !status || !emp_id) {
+    if (!leave_id || !status || !emp_id)
       return res.status(400).json({ message: "Missing required fields" });
-    }
 
     const approver = await leaveService.getApproverInfo(emp_id);
-    if (!approver) {
+    if (!approver)
       return res.status(404).json({ message: "Approver Not Found" });
-    }
 
     const approverName = approver.ename;
-    const userPost = approver.post || "";
-    const isDirector = userPost.toLowerCase().includes("director");
+    const isDirector =
+      approver.post && approver.post.toLowerCase().includes("director");
 
-    // Determine New Status
     let newStatusDb = "";
     let msg = "";
-
-    if (status === 'Cancelled') {
-      newStatusDb = 'Cancelled'; // Converted to 'Rejected' in service
+    if (status === "Cancelled") {
+      newStatusDb = "Cancelled";
       msg = "Leave Rejected Successfully";
     } else {
       if (isDirector) {
-        newStatusDb = 'Approved'; // Final
+        newStatusDb = "Approved";
         msg = "Final Approval Done";
       } else {
-        newStatusDb = 'Pending Director Approval'; // Intermediate
+        newStatusDb = "Pending Director Approval";
         msg = "Approved & Forwarded to Director";
       }
     }
 
     await leaveService.updateLeaveStatus(
-      leave_id, 
-      newStatusDb, 
-      comments || "", 
-      approverName, 
+      leave_id,
+      newStatusDb,
+      comments || "",
+      approverName,
       isDirector
     );
 
-    // Send Email
+    // Status Email
     try {
       const leaveDetails = await leaveService.getLeaveDetailsById(leave_id);
-
       if (leaveDetails) {
         const userEmail = leaveDetails.user_email;
-        const managerEmail = await leaveService.getEmployeeEmail(leaveDetails.reporting_manager);
-        
+        const managerEmail = await leaveService.getEmployeeEmail(
+          leaveDetails.reporting_manager
+        );
         let directorEmails = [];
-        if (!isDirector && status !== 'Cancelled') {
-             directorEmails = await leaveService.getDirectorEmails();
-        }
-
-        const recipients = [...new Set([userEmail, managerEmail, ...directorEmails].filter(e => e))];
-
-        let emailStatusLabel = "Approved";
-        if (status === 'Cancelled') emailStatusLabel = "Rejected";
-        else if (!isDirector) emailStatusLabel = "Pending Director Approval (Manager Approved)";
-
-        if (recipients.length > 0) {
+        if (!isDirector && status !== "Cancelled")
+          directorEmails = await leaveService.getDirectorEmails();
+        const recipients = [
+          ...new Set(
+            [userEmail, managerEmail, ...directorEmails].filter((e) => e)
+          ),
+        ];
+        let emailStatusLabel =
+          status === "Cancelled"
+            ? "Rejected"
+            : !isDirector
+            ? "Pending Director Approval"
+            : "Approved";
+        if (recipients.length > 0)
           emailService.sendStatusUpdateEmail(
-            leaveDetails, 
-            emailStatusLabel, 
-            approverName, 
-            comments || "No comments", 
+            leaveDetails,
+            emailStatusLabel,
+            approverName,
+            comments || "No comments",
             recipients
           );
-        }
       }
-    } catch (emailErr) {
-      console.error("⚠️ Status Email Failed:", emailErr.message);
-    }
+    } catch (e) {}
 
     res.status(200).json({ message: msg });
-
   } catch (error) {
-    console.error("Error in processLeaveUpdate:", error);
     res.status(500).json({ message: "Database Error: " + error.message });
   }
 };
 
-// Helper: Convert JSON Array to CSV String
-const convertToCSV = (arr) => {
-  if (!arr || !arr.length) return "";
-  const headers = Object.keys(arr[0]).join(",");
-  const rows = arr.map(obj => 
-    Object.values(obj).map(val => {
-      // Escape quotes and wrap in quotes if contains comma
-      const str = String(val === null ? "" : val);
-      return `"${str.replace(/"/g, '""')}"`; 
-    }).join(",")
-  );
-  return [headers, ...rows].join("\n");
-};
-
 // ==========================================
-// 5. GENERATE LEAVE REPORT (JSON/CSV)
+// 5. GENERATE REPORT
 // ==========================================
 const generateLeaveReport = async (req, res) => {
   try {
     const { emp_id, from_date, to_date, status, format } = req.query;
+    if (!emp_id || !from_date || !to_date)
+      return res.status(400).json({ error: "Missing Parameters" });
 
-    // 1. Validation
-    if (!emp_id || !from_date || !to_date) {
-      return res.status(400).json({ error: "Missing Parameters (emp_id, from_date, to_date)" });
-    }
+    const rawData = await leaveService.getLeaveReportData(
+      emp_id,
+      from_date,
+      to_date,
+      status || "All"
+    );
 
-    // 2. Fetch Data
-    const rawData = await leaveService.getLeaveReportData(emp_id, from_date, to_date, status || 'All');
-
-    // 3. Clean Data (Handle 0.5 display)
-    const cleanedData = rawData.map(row => {
-      // Clone row to avoid mutating reference
+    const cleanedData = rawData.map((row) => {
       const newRow = { ...row };
-      if (parseFloat(newRow['Days']) === 0.5) {
-        newRow['Days'] = '0.5 (Half Day)';
-      }
+      if (parseFloat(newRow["Days"]) === 0.5) newRow["Days"] = "0.5 (Half Day)";
       return newRow;
     });
 
-    // 4. Output Logic
-    if (format === 'csv') {
-      // CSV DOWNLOAD
+    if (format === "csv") {
       const csvString = convertToCSV(cleanedData);
-      const filename = `Leave_Report_${new Date().toISOString().slice(0,10)}.csv`;
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      const filename = `Leave_Report_${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`;
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
       res.status(200).send(csvString);
-
     } else {
-      // JSON RESPONSE (Default)
       res.status(200).json(cleanedData);
     }
-
   } catch (error) {
-    console.error("Error generating report:", error);
     res.status(500).json({ error: "Server Error" });
   }
 };
@@ -509,5 +560,5 @@ module.exports = {
   applyLeave,
   getManagerLeaves,
   processLeaveUpdate,
-  generateLeaveReport
+  generateLeaveReport,
 };

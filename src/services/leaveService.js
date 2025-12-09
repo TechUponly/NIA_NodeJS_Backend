@@ -1,8 +1,37 @@
 const { pool } = require("../config/database");
 
 // ==========================================
-// 1. LEAVE HISTORY & DETAILS
+// 1. CONFIGURATION & HELPERS
 // ==========================================
+
+// Fetch Leave Rules from DB based on User Type
+const getLeaveConfiguration = async (employeeType) => {
+  // Default to 'Core' if null
+  const type = employeeType || 'Core';
+  const query = `
+    SELECT leave_type, annual_limit, max_per_request, min_per_request 
+    FROM leave_configurations 
+    WHERE user_type = ? AND is_active = 1
+  `;
+  const [rows] = await pool.execute(query, [type]);
+  return rows;
+};
+
+// ==========================================
+// 2. EMPLOYEE & LEAVE DATA FETCHING
+// ==========================================
+
+// Fetch Full Employee Details
+const getEmployeeDetails = async (empId) => {
+  const query = `
+    SELECT emp_id, usercode, ename, gender, joindate, is_saturday_working, email, reporting_manager, employee_type 
+    FROM employee 
+    WHERE usercode = ? OR emp_id = ? 
+    LIMIT 1
+  `;
+  const [rows] = await pool.execute(query, [empId, empId]);
+  return rows[0];
+};
 
 // Fetch Leave History for a specific month/year
 const getEmployeeLeavesByMonth = async (empId, date) => {
@@ -19,18 +48,6 @@ const getEmployeeLeavesByMonth = async (empId, date) => {
   } catch (error) {
     throw error;
   }
-};
-
-// Fetch Full Employee Details (for Application & Rules)
-const getEmployeeDetails = async (empId) => {
-  const query = `
-    SELECT emp_id, usercode, ename, gender, joindate, is_saturday_working, email, reporting_manager 
-    FROM employee 
-    WHERE usercode = ? OR emp_id = ? 
-    LIMIT 1
-  `;
-  const [rows] = await pool.execute(query, [empId, empId]);
-  return rows[0];
 };
 
 // Fetch specific Leave Application details (for Email Notifications)
@@ -51,7 +68,7 @@ const getLeaveDetailsById = async (leaveId) => {
 };
 
 // ==========================================
-// 2. BALANCE CALCULATION HELPERS
+// 3. BALANCE CALCULATION HELPERS
 // ==========================================
 
 // Fetch Opening Balances from 'leave_balance' table
@@ -61,7 +78,7 @@ const getOpeningBalance = async (empId, year) => {
   return rows[0];
 };
 
-// Fetch Used Leaves (Annual: CL, PL, SL)
+// Fetch Annual Used Leaves (CL, PL, SL)
 const getAnnualLeavesTaken = async (empId, year) => {
   const startOfYear = `${year}-01-01`;
   const endOfYear = `${year}-12-31`;
@@ -111,7 +128,7 @@ const getUsedLeaveCount = async (empId, ltype, year) => {
 };
 
 // ==========================================
-// 3. APPLY LEAVE (INSERT)
+// 4. APPLY LEAVE (INSERT)
 // ==========================================
 
 const applyLeave = async (leaveData) => {
@@ -140,7 +157,7 @@ const applyLeave = async (leaveData) => {
 };
 
 // ==========================================
-// 4. MANAGER & DIRECTOR APPROVALS
+// 5. MANAGER & DIRECTOR APPROVALS
 // ==========================================
 
 // Get Approver Info (Role Check)
@@ -151,9 +168,16 @@ const getApproverInfo = async (userCode) => {
 };
 
 // Get Team Members for a Manager
-const getTeamIds = async (managerId) => {
-  const query = "SELECT GROUP_CONCAT(emp_id) as ids FROM employee WHERE reporting_manager = ?";
-  const [rows] = await pool.execute(query, [managerId]);
+const getTeamIds = async (managerId, managerUserCode, managerName) => {
+  const query = `
+    SELECT GROUP_CONCAT(emp_id) as ids 
+    FROM employee 
+    WHERE reporting_manager = ?       -- Check ID (e.g. 5)
+       OR reporting_manager = ?       -- Check Code (e.g. 'C005')
+       OR reporting_manager = ?       -- Check Name (e.g. 'Amit Kumar')
+  `;
+  // Pass all three variations
+  const [rows] = await pool.execute(query, [managerId, managerUserCode, managerName]);
   return rows[0].ids;
 };
 
@@ -162,7 +186,15 @@ const getPendingLeavesForApprover = async (isDirector, teamIds) => {
   let query = "";
   
   if (isDirector) {
-    // DIRECTOR VIEW
+    // DIRECTOR VIEW: 
+    // 1. All 'Pending Director Approval'
+    // 2. PLUS 'Pending' if it's their own direct report
+    
+    let teamCondition = "";
+    if (teamIds) {
+      teamCondition = `OR (l.emp_id IN (${teamIds}) AND l.l_status = 'Pending')`;
+    }
+
     query = `
       SELECT 
         l.leave_id, l.ltype, l.fdate, l.tdate, l.comment, l.document_path, 
@@ -170,13 +202,15 @@ const getPendingLeavesForApprover = async (isDirector, teamIds) => {
         e.ename as emp_name
       FROM leave_app l
       JOIN employee e ON l.emp_id = e.emp_id
-      WHERE l.l_status = 'Pending Director Approval'
+      WHERE 
+        (l.l_status = 'Pending Director Approval')
+        ${teamCondition}
       ORDER BY l.leave_id DESC
     `;
   } else {
-    // MANAGER VIEW
+    // MANAGER VIEW: Only see Team's Pending leaves
     if (!teamIds) return []; 
-    // Note: teamIds is a CSV string from GROUP_CONCAT, safe to inject here as it comes from DB
+    
     query = `
       SELECT 
         l.leave_id, l.ltype, l.fdate, l.tdate, l.comment, l.document_path, 
@@ -199,7 +233,6 @@ const updateLeaveStatus = async (leaveId, status, comments, approverName, isDire
   let query = "";
   let params = [];
 
-  // Logic 1: REJECTION (Cancelled)
   if (status === 'Cancelled') {
     query = `
       UPDATE leave_app SET 
@@ -212,7 +245,6 @@ const updateLeaveStatus = async (leaveId, status, comments, approverName, isDire
     const commentString = ` | Rejected by ${approverName}: ${comments}`;
     params = [commentString, leaveId];
   } 
-  // Logic 2: APPROVAL
   else {
     if (isDirector) {
       // Director = Final Approval
@@ -247,10 +279,9 @@ const updateLeaveStatus = async (leaveId, status, comments, approverName, isDire
 };
 
 // ==========================================
-// 5. EMAIL HELPERS
+// 6. EMAIL & REPORTING
 // ==========================================
 
-// Get Email Address of a specific Employee ID (For Manager)
 const getEmployeeEmail = async (empId) => {
   if (!empId) return null;
   const query = "SELECT email FROM employee WHERE emp_id = ?";
@@ -258,70 +289,48 @@ const getEmployeeEmail = async (empId) => {
   return rows[0] ? rows[0].email : null;
 };
 
-// Get Director Email(s)
 const getDirectorEmails = async () => {
   const query = "SELECT email FROM employee WHERE post LIKE '%Director%'";
   const [rows] = await pool.execute(query);
   return rows.map(r => r.email);
 };
 
-// ==========================================
-// REPORT GENERATION LOGIC
-// ==========================================
+// Report Generation with Strict Access Control
 const getLeaveReportData = async (empId, fromDate, toDate, statusFilter) => {
-  // 1. Get Logged-in User's Details
-  const userQuery = `
-    SELECT emp_id, admin_type, post 
-    FROM employee 
-    WHERE usercode = ? 
-    LIMIT 1
-  `;
+  const userQuery = `SELECT emp_id, admin_type, post FROM employee WHERE usercode = ? LIMIT 1`;
   const [userRows] = await pool.execute(userQuery, [empId]);
   
-  if (userRows.length === 0) return []; // User not found
+  if (userRows.length === 0) return [];
   const currentUser = userRows[0];
   
-  // 2. Define Permissions
-  // Strict check: admin_type must be string '1'
   const isAdmin = String(currentUser.admin_type) === '1';
   const isDirector = currentUser.post && currentUser.post.toLowerCase().includes('director');
 
   let whereClause = "";
   let params = [];
 
-  // 3. Build Access Logic
   if (isAdmin || isDirector) {
-    // ------------------------------------------
-    // CASE A: ADMIN / DIRECTOR -> VIEW ALL
-    // ------------------------------------------
+    // Admin/Director: View All
     whereClause = "WHERE 1=1"; 
   } 
   else {
-    // ------------------------------------------
-    // CASE B: MANAGER -> VIEW SUBORDINATES ONLY
-    // ------------------------------------------
-    
-    // Find employees who report TO this user
+    // Manager: View Team Only (Not Self, Not others)
     const teamQuery = "SELECT GROUP_CONCAT(emp_id) as ids FROM employee WHERE reporting_manager = ?";
     const [teamRows] = await pool.execute(teamQuery, [currentUser.emp_id]);
     
     let teamIds = teamRows[0].ids;
 
     if (teamIds) {
-      // Logic: Only show employees listed in teamIds.
-      // We do NOT add currentUser.emp_id here, so the manager does not see their own leaves in this report.
-      whereClause = `WHERE l.emp_id IN (${teamIds})`;
+      // Add manager's own ID to list if you want them to see their own report
+      const idsToList = `${teamIds},${currentUser.emp_id}`;
+      whereClause = `WHERE l.emp_id IN (${idsToList})`;
     } else {
-      // ------------------------------------------
-      // CASE C: REGULAR USER -> NO ACCESS
-      // ------------------------------------------
-      // If the user is not Admin/Director and has no team members reporting to them,
-      // they should see NOTHING.
-      return []; 
+      // Regular user: See only self
+      whereClause = "WHERE l.emp_id = ?";
+      params.push(currentUser.emp_id);
     }
   }
 
-  // 4. Apply Common Filters (Date & Status)
   whereClause += " AND (l.fdate BETWEEN ? AND ?)";
   params.push(fromDate, toDate);
 
@@ -330,7 +339,6 @@ const getLeaveReportData = async (empId, fromDate, toDate, statusFilter) => {
     params.push(statusFilter);
   }
 
-  // 5. Execute Final Query
   const sql = `
     SELECT 
       e.usercode as 'Employee ID',
@@ -355,6 +363,7 @@ const getLeaveReportData = async (empId, fromDate, toDate, statusFilter) => {
 };
 
 module.exports = {
+  getLeaveConfiguration,
   getEmployeeLeavesByMonth,
   getEmployeeDetails,
   getLeaveDetailsById,
