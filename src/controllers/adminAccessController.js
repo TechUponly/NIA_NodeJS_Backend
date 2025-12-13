@@ -32,10 +32,10 @@ const getAdminAccessPages = async (req, res, next) => {
         }
 
         groupedPages[current_menu].push({
-          id: String(row.id), // Ensure string to match PHP "11"
+          id: String(row.id),
           pages: row.pages,
           on_click_name: row.on_click_name,
-          is_dropdown: String(row.is_dropdown), // Ensure string "0"/"1"
+          is_dropdown: String(row.is_dropdown),
           icons: row.icon
         });
 
@@ -56,10 +56,10 @@ const getAdminAccessPages = async (req, res, next) => {
       const response = {
         status: "Success",
         emp_code: emp_code,
-        admin_type: String(admin_type), 
-        submenupages: [submenupages], 
-        officialLettersId: [officialLettersIdName],
-        admin_pages: [groupedPages], 
+        admin_type: String(admin_type),
+        submenupages: [submenupages],
+        officialLettersId: [String(officialLettersIdName)],
+        admin_pages: [groupedPages],
         admin_routes: admin_routes,
         admin_internalpages_routes: admin_internalpages_routes
       };

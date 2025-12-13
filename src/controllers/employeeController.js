@@ -1,4 +1,5 @@
 const employeeService = require("../services/employeeService");
+const { pool } = require("../config/database");
 
 // ==========================================
 // 1. GET LIST & STATS
@@ -418,6 +419,56 @@ const uploadBulkEmployees = async (req, res) => {
   }
 };
 
+const getEmployeesByDepartment = async (req, res) => {
+ try {
+    const { department, usercode } = req.body;
+    if (!department) {
+      return res.json({
+        status: false,
+        message: "Please provide a 'department' to filter by.",
+      });
+    }
+    let query = `
+      SELECT * FROM employee 
+      WHERE department = ? 
+      AND (active_inactive_status = 'active' OR active_inactive_status = 'Active')
+    `;
+    
+    let queryParams = [department];
+    if (usercode) {
+        query += ` AND usercode != ?`; 
+        queryParams.push(usercode);
+    }
+
+    const [rows] = await pool.execute(query, queryParams);
+
+    if (rows.length > 0) {
+      return res.json({
+        status: true,
+        message: "Data found",
+        total: rows.length,
+        data: rows,
+      });
+    } else {
+      return res.json({
+        status: false,
+        message: "No colleagues found in this department.",
+        data: [],
+      });
+    }
+
+  } catch (error) {
+    console.error("Error fetching employees:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+ 
+ 
+
 module.exports = {
   getEmployeeDetails,
   getEmployeeStats,
@@ -429,4 +480,5 @@ module.exports = {
   getEditEmployeeDetails,
   updateDocument,
   uploadBulkEmployees,
+  getEmployeesByDepartment,
 };

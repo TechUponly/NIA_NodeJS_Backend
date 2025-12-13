@@ -203,6 +203,7 @@ router.get("/admin/manage-organization", orgController.handleOrgRequest);
 router.post("/admin/manage-organization", orgController.handleOrgRequest);
 router.get("/get-people", peopleController.getPeopleHierarchy);
 router.post("/admin/upload-bulk-employee", employeeController.uploadBulkEmployees);
+router.post("/get-employees-by-department", employeeController.getEmployeesByDepartment);
 
 // 404 handler for API routes
 router.use("*", (req, res) => {
