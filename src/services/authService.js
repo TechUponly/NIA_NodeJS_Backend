@@ -289,6 +289,246 @@ class AuthService {
       throw new Error(`Session validation failed: ${error.message}`);
     }
   }
+// ... (keep all your existing code above)
+
+  /**
+   * ============================================
+   * BYPASS LOGIN METHODS (WEB AUTHENTICATION)
+   * ============================================
+   */
+
+  /**
+   * Find employee by usercode (without password check)
+   * @param {string} usercode - Employee usercode
+   * @returns {object|null} Employee data or null
+   */
+  async findEmployeeByUsercodeOnly(usercode) {
+    try {
+      const employeeQuery = `
+        SELECT *, 
+               getReportingNameByEmpID(emp_id) as reporting_manager,
+               getBranchByEmpID(emp_id) as branch_location 
+        FROM employee 
+        WHERE usercode = ?
+      `;
+
+      const [employeeRows] = await pool.execute(employeeQuery, [usercode]);
+
+      if (employeeRows.length === 0) {
+        return null;
+      }
+
+      return employeeRows[0];
+    } catch (error) {
+      throw new Error(`Failed to find employee: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update or create FCM token in fcm_token table
+   * @param {object} data - FCM token data
+   * @returns {boolean} Success status
+   */
+  async upsertFCMTokenTable(data) {
+    const { emp_id, emp_code, fcm_token, device_id } = data;
+
+    try {
+      // Check if token exists
+      const [existingTokens] = await pool.execute(
+        'SELECT * FROM fcm_token WHERE emp_id = ?',
+        [emp_id]
+      );
+
+      if (existingTokens && existingTokens.length > 0) {
+        // Update existing token
+        await pool.execute(
+          'UPDATE fcm_token SET token = ?, device_id = ?, updated_at = NOW() WHERE emp_id = ?',
+          [fcm_token, device_id, emp_id]
+        );
+        console.log('🔄 FCM token updated in fcm_token table for emp_id:', emp_id);
+      } else {
+        // Insert new token
+        await pool.execute(
+          'INSERT INTO fcm_token (emp_id, emp_code, token, device_id, created_at) VALUES (?, ?, ?, ?, NOW())',
+          [emp_id, emp_code, fcm_token, device_id]
+        );
+        console.log('✨ New FCM token created in fcm_token table for emp_id:', emp_id);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error upserting FCM token:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Log user login in login_logs table
+   * @param {object} data - Login data
+   * @returns {boolean} Success status
+   */
+  async logUserLoginActivity(data) {
+    const { emp_id, emp_code, login_type, ip_address, user_agent } = data;
+
+    try {
+      await pool.execute(
+        'INSERT INTO login_logs (emp_id, emp_code, login_type, ip_address, user_agent, login_time) VALUES (?, ?, ?, ?, ?, NOW())',
+        [emp_id, emp_code, login_type, ip_address, user_agent]
+      );
+      console.log('📝 Login logged for emp_id:', emp_id);
+      return true;
+    } catch (error) {
+      console.error('Error logging login:', error);
+      // Don't throw - logging failure shouldn't break login
+      return false;
+    }
+  }
+
+  /**
+   * Format employee response for bypass login (PHP compatible)
+   * @param {object} employee - Employee data from database
+   * @param {string} user_type - User type
+   * @param {string} jwtToken - JWT token
+   * @returns {object} Formatted employee data
+   */
+  formatBypassLoginResponse(employee, user_type = 'employee', jwtToken) {
+    return {
+      status: 'found',
+      emp_id: employee.emp_id,
+      emp_code: employee.emp_code || employee.usercode,
+      ename: employee.ename || '',
+      usercode: employee.usercode || '',
+      descri: employee.descri || '',
+      post: employee.post || '',
+      joindate: employee.joindate || '',
+      mno: employee.mno || '',
+      official_mail: employee.official_mail || employee.email || '',
+      address: employee.address || '',
+      bgrp: employee.bgrp || '',
+      state: employee.state || '',
+      Branch: employee.city || employee.branch_location || '',
+      profileimg: employee.passphoto || '',
+      gender: employee.gender || '',
+      mobile_app_level: employee.mobile_app_level || '',
+      user_type: user_type,
+      zoom_link: employee.zoom_link || '',
+      channel: employee.channel || '',
+      token: jwtToken,
+      active_hrms: ['9'],
+      admin_portal: employee.admin_portal || '',
+      department: employee.department || '',
+      company_name: employee.company_name || '',
+      reporting_manager: employee.reporting_manager || 'N/A'
+    };
+  }
+
+  /**
+   * Process bypass login (without password validation)
+   * @param {string} usercode - User code
+   * @param {string} user_type - User type
+   * @param {string} fcm_token - FCM token
+   * @param {string} device_id - Device ID
+   * @param {string} ip_address - IP address
+   * @param {string} user_agent - User agent
+   * @returns {object|null} Bypass login response or null if failed
+   */
+  async processBypassLogin(usercode, user_type, fcm_token, device_id, ip_address, user_agent) {
+    try {
+      // Find employee by usercode only (no password check)
+      const employee = await this.findEmployeeByUsercodeOnly(usercode);
+
+      if (!employee) {
+        console.log('❌ Employee not found for bypass login:', usercode);
+        return null;
+      }
+
+      console.log('✅ Employee found for bypass login:', employee.ename);
+
+      // Generate JWT token
+      const tokenHandler = require('../utils/jwtHandler');
+      const jwtToken = tokenHandler.generateToken(employee.emp_code || employee.usercode);
+
+      // Update/Create FCM token in fcm_token table
+      await this.upsertFCMTokenTable({
+        emp_id: employee.emp_id,
+        emp_code: employee.emp_code || employee.usercode,
+        fcm_token,
+        device_id
+      });
+
+      // Log the login activity (non-blocking)
+      this.logUserLoginActivity({
+        emp_id: employee.emp_id,
+        emp_code: employee.emp_code || employee.usercode,
+        login_type: 'web_bypass',
+        ip_address,
+        user_agent
+      }).catch(err => console.error('Login logging failed:', err));
+
+      // Format and return response
+      return this.formatBypassLoginResponse(employee, user_type, jwtToken);
+    } catch (error) {
+      throw new Error(`Bypass login process failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process validate user (for query param authentication)
+   * @param {string} userId - User ID
+   * @param {string} type - Authentication type
+   * @param {string} fcm_token - FCM token
+   * @param {string} ip_address - IP address
+   * @param {string} user_agent - User agent
+   * @returns {object|null} Validation response or null if failed
+   */
+  async processValidateUser(userId, type, fcm_token, ip_address, user_agent) {
+    try {
+      // Find employee
+      const employee = await this.findEmployeeByUsercodeOnly(userId);
+
+      if (!employee) {
+        return null;
+      }
+
+      // Update FCM token if provided and valid
+      if (fcm_token && fcm_token !== 'no_token' && fcm_token !== 'abc') {
+        await this.upsertFCMTokenTable({
+          emp_id: employee.emp_id,
+          emp_code: employee.emp_code || employee.usercode,
+          fcm_token,
+          device_id: 'web_query_param'
+        });
+      }
+
+      // Log the login activity (non-blocking)
+      this.logUserLoginActivity({
+        emp_id: employee.emp_id,
+        emp_code: employee.emp_code || employee.usercode,
+        login_type: type,
+        ip_address,
+        user_agent
+      }).catch(err => console.error('Login logging failed:', err));
+
+      // Return formatted response
+      return {
+        success: true,
+        usercode: employee.usercode,
+        admin_type: employee.mobile_app_level || employee.admin_type || '0',
+        username: employee.ename,
+        email: employee.email || employee.official_mail,
+        official_mail: employee.official_mail,
+        emp_id: employee.emp_id,
+        emp_code: employee.emp_code || employee.usercode,
+        post: employee.post,
+        descri: employee.descri,
+        department: employee.department,
+        message: 'User validated successfully',
+      };
+    } catch (error) {
+      throw new Error(`User validation failed: ${error.message}`);
+    }
+  }
+
 }
 
 module.exports = new AuthService();

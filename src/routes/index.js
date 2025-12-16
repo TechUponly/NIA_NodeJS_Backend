@@ -140,6 +140,12 @@ router.get("/health", (req, res) => {
 // AUTHENTICATION ROUTES
 // ========================================
 router.get("/auth/login", authController.login);
+
+// ============= BYPASS LOGIN ROUTES (NEW) =============
+
+router.post('/auth/bypass-login', authController.bypassLogin);
+router.post('/auth/validate-user', authController.validateUser);
+
 // ========================================
 // ADMIN ACCESS ROUTES
 // ========================================

@@ -120,6 +120,114 @@ class AuthController {
       return errorResponse(res, 500, "Internal server error", error.message);
     }
   }
+
+  async bypassLogin(req, res) {
+    try {
+      // Extract and sanitize input
+      const {
+        t1: usercode = '',
+        t2: password = '',
+        user_type = 'employee',
+        fcm_token = 'abc',
+        device_id = '123'
+      } = req.body;
+
+      console.log('🔐 Bypass login attempt for user:', usercode);
+
+      // Validate required fields
+      if (!usercode) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'User code (t1) is required'
+        });
+      }
+
+      // Get IP address and user agent
+      const ip_address = req.ip || req.connection.remoteAddress || 'unknown';
+      const user_agent = req.get('user-agent') || 'unknown';
+
+      // Process bypass login through service
+      const loginResult = await authService.processBypassLogin(
+        usercode,
+        user_type,
+        fcm_token,
+        device_id,
+        ip_address,
+        user_agent
+      );
+
+      if (!loginResult) {
+        console.log('❌ Bypass login failed: User not found');
+        return res.json({
+          status: 'not found',
+          message: 'Employee not found'
+        });
+      }
+
+      console.log('✅ Bypass login successful for:', loginResult.ename);
+      return res.json(loginResult);
+
+    } catch (error) {
+      console.error('❌ Bypass login error:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  }
+
+  /**
+   * Validate User Controller (Query Param Authentication)
+   * @route POST /api/auth/validate-user
+   * @description Validate user for query parameter authentication
+   */
+  async validateUser(req, res) {
+    try {
+      const { userId, type, fcm_token } = req.body;
+
+      console.log('🔍 Validating user:', { userId, type, fcm_token });
+
+      // Validate required fields
+      if (!userId || !type) {
+        return res.json({
+          success: false,
+          message: 'userId and type are required',
+        });
+      }
+
+      // Get IP address and user agent
+      const ip_address = req.ip || req.connection.remoteAddress || 'unknown';
+      const user_agent = req.get('user-agent') || 'unknown';
+
+      // Process user validation through service
+      const validationResult = await authService.processValidateUser(
+        userId,
+        type,
+        fcm_token,
+        ip_address,
+        user_agent
+      );
+
+      if (!validationResult) {
+        return res.json({
+          success: false,
+          message: 'User not found',
+        });
+      }
+
+      console.log('✅ User validation successful for:', validationResult.username);
+      return res.json(validationResult);
+
+    } catch (error) {
+      console.error('❌ User validation error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error during validation',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      });
+    }
+  }
 }
 
 module.exports = new AuthController();
