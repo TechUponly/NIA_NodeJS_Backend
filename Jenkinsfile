@@ -42,7 +42,7 @@ pipeline {
             steps {
                 sh '''
                     cd ${DEPLOY_PATH}
-                    pm2 restart ${PM2_APP_NAME} || pm2 start src/index.js --name ${PM2_APP_NAME}
+                    pm2 restart ${PM2_APP_NAME} || pm2 start src/app.js --name ${PM2_APP_NAME}
                     pm2 save
                 '''
             }
