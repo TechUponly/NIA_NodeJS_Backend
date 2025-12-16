@@ -26,7 +26,7 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh '''
-                    pm2 stop ${PM2_APP_NAME} || true
+                    sudo -u uponly-azure-uat pm2 stop ${PM2_APP_NAME} || true
                     
                     sudo mkdir -p ${DEPLOY_PATH}
                     sudo rsync -av --delete --exclude node_modules --exclude .git --exclude .env ./ ${DEPLOY_PATH}/
@@ -42,8 +42,8 @@ pipeline {
             steps {
                 sh '''
                     cd ${DEPLOY_PATH}
-                    pm2 restart ${PM2_APP_NAME} || pm2 start src/app.js --name ${PM2_APP_NAME}
-                    pm2 save
+                    sudo -u uponly-azure-uat pm2 restart ${PM2_APP_NAME} || sudo -u uponly-azure-uat pm2 start src/app.js --name ${PM2_APP_NAME}
+                    sudo -u uponly-azure-uat pm2 save
                 '''
             }
         }
