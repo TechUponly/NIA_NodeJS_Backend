@@ -614,6 +614,35 @@ const getEmployeeById = async (empId) => {
   return rows;
 };
 
+const changePasswordService = async (emp_id, old_password, new_password) => {
+  // 1. Fetch current password
+  const [user] = await pool.execute(
+    "SELECT password FROM employee WHERE emp_id = ?",
+    [emp_id]
+  );
+
+  if (user.length === 0) {
+    return { status: false, message: "User not found." };
+  }
+
+  const currentDbPassword = user[0].password;
+
+  // 2. Verify Old Password
+  if (currentDbPassword !== old_password) {
+    return { status: false, message: "Incorrect old password." };
+  }
+
+  // 3. Update to New Password
+  const updateQuery = "UPDATE employee SET password = ? WHERE emp_id = ?";
+  const [result] = await pool.execute(updateQuery, [new_password, emp_id]);
+
+  if (result.affectedRows > 0) {
+    return { status: true, message: "Password changed successfully!" };
+  } else {
+    return { status: false, message: "Failed to update password." };
+  }
+};
+
 module.exports = {
   getEmployees,
   getEmployeeCounts,
@@ -633,4 +662,5 @@ module.exports = {
   updateSingleDocument,
   updateEmployeeDocs,
   getEmployeeById,
+  changePasswordService,
 };

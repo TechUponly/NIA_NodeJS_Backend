@@ -362,6 +362,27 @@ const getLeaveReportData = async (empId, fromDate, toDate, statusFilter) => {
   return rows;
 };
 
+// Fetch All Leave Applications for an Employee (History)
+const getAllLeavesForEmployee = async (empId) => {
+  const query = `
+    SELECT 
+      leave_id, 
+      ltype, 
+      fdate, 
+      tdate, 
+      l_status, 
+      no_of_days, 
+      shift_type,
+      apply_date,
+      comment
+    FROM leave_app 
+    WHERE emp_id = ? 
+    ORDER BY fdate DESC
+  `;
+  const [rows] = await pool.execute(query, [empId]);
+  return rows;
+};
+
 module.exports = {
   getLeaveConfiguration,
   getEmployeeLeavesByMonth,
@@ -378,5 +399,6 @@ module.exports = {
   updateLeaveStatus,
   getEmployeeEmail,
   getDirectorEmails,
-  getLeaveReportData
+  getLeaveReportData,
+  getAllLeavesForEmployee,
 };

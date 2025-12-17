@@ -466,6 +466,34 @@ const getEmployeesByDepartment = async (req, res) => {
     });
   }
 };
+
+const changePassword = async (req, res) => {
+  try {
+    const { emp_id, old_password, new_password } = req.body;
+
+    // 1. Basic Input Validation
+    if (!emp_id || !old_password || !new_password) {
+      return res.json({
+        status: false,
+        message: "Please provide Employee ID, Old Password, and New Password.",
+      });
+    }
+
+    // 2. Call the Service
+    const result = await employeeService.changePasswordService(emp_id, old_password, new_password);
+
+    // 3. Send Response
+    return res.json(result);
+
+  } catch (error) {
+    console.error("Change Password Controller Error:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
  
  
 
@@ -481,4 +509,5 @@ module.exports = {
   updateDocument,
   uploadBulkEmployees,
   getEmployeesByDepartment,
+  changePassword,
 };

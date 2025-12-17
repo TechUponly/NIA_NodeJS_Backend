@@ -171,6 +171,7 @@ router.get("/leave/get-leave-balance", leaveBalanceController.getLeaveBalance);
 // Trigger Year End Processing (Run this once on Jan 1st)
 router.post("/admin/run-year-end-process", yearEndController.runYearEndProcess);
 router.post("/leave/get-leave-history", leaveController.getLeaveHistory);
+router.post("/leave/get-leave-full-history", leaveController.getFullLeaveHistory);
 router.post("/leave/apply-leave", upload.single('document'), leaveController.applyLeave);
 router.get("/leave/get-manager-leaves", leaveController.getManagerLeaves);
 router.post("/leave/update-leave-status", leaveController.processLeaveUpdate);
@@ -210,6 +211,7 @@ router.post("/admin/manage-organization", orgController.handleOrgRequest);
 router.get("/get-people", peopleController.getPeopleHierarchy);
 router.post("/admin/upload-bulk-employee", employeeController.uploadBulkEmployees);
 router.post("/get-employees-by-department", employeeController.getEmployeesByDepartment);
+router.post("/change-password", employeeController.changePassword);
 
 // 404 handler for API routes
 router.use("*", (req, res) => {

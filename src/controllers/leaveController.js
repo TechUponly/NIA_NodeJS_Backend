@@ -1,6 +1,7 @@
 const leaveService = require("../services/leaveService");
 const emailService = require("../services/emailService");
 const { pool } = require("../config/database");
+const { get } = require("../routes");
 
 // Helper: JSON to CSV
 const convertToCSV = (arr) => {
@@ -555,10 +556,49 @@ const generateLeaveReport = async (req, res) => {
   }
 };
 
+const getFullLeaveHistory = async (req, res) => {
+  try {
+    const { emp_id } = req.body;
+
+    if (!emp_id) {
+      return res.status(200).json({ 
+        status: false, 
+        message: "Employee ID is required" 
+      });
+    }
+
+    // Call the new service function
+    const rawData = await leaveService.getAllLeavesForEmployee(emp_id);
+
+    if (rawData.length > 0) {
+      // Return raw data (frontend needs accurate ISO dates for comparison)
+      return res.status(200).json({
+        status: true,
+        message: "History fetched successfully",
+        data: rawData
+      });
+    } else {
+      return res.status(200).json({
+        status: false,
+        message: "No leave history found",
+        data: []
+      });
+    }
+
+  } catch (error) {
+    console.error("Error in getFullLeaveHistory:", error);
+    return res.status(500).json({ 
+      status: false, 
+      message: "Server Error: " + error.message 
+    });
+  }
+};
+
 module.exports = {
   getLeaveHistory,
   applyLeave,
   getManagerLeaves,
   processLeaveUpdate,
   generateLeaveReport,
+  getFullLeaveHistory,
 };
