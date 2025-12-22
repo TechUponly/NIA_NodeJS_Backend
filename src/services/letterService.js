@@ -11,5 +11,5 @@ const getAbscondingDetails = async (empId) => {
 };
 
 module.exports = {
-  getAbscondingDetails
+  getAbscondingDetails,
 };
