@@ -34,6 +34,7 @@ pipeline {
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
                         rsync -avz --delete \
+                            -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
                             --exclude 'node_modules' \
                             --exclude '.git' \
                             --exclude '.env' \
@@ -56,7 +57,7 @@ pipeline {
                 echo '✓ Creating required directories...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${DEPLOY_USER}@${DEPLOY_SERVER} "
                             cd ${DEPLOY_PATH}
                             
                             # Create all required directories
@@ -81,7 +82,7 @@ pipeline {
                 echo '✓ Setting up environment variables...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "cat > ${DEPLOY_PATH}/.env << 'EOF'
+                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${DEPLOY_USER}@${DEPLOY_SERVER} "cat > ${DEPLOY_PATH}/.env << 'EOF'
 # Node Environment
 NODE_ENV=production
 PORT=3002
@@ -92,7 +93,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=nia_hrms_uat
 DB_USER=root
-DB_PASSWORD=root123"
+DB_PASSWORD=YOUR_MYSQL_PASSWORD_HERE
 
 # JWT Configuration
 JWT_SECRET=nia_hrms_uat_secret_key_change_this_to_something_secure_32_chars_minimum
@@ -107,12 +108,6 @@ CORS_ORIGIN=https://uponly.duckdns.org
 
 # Logging
 LOG_LEVEL=info
-
-# Email Configuration (if needed)
-# SMTP_HOST=smtp.gmail.com
-# SMTP_PORT=587
-# SMTP_USER=your-email@gmail.com
-# SMTP_PASSWORD=your-app-password
 EOF"
                         echo "✓ Environment file created"
                     '''
@@ -125,7 +120,7 @@ EOF"
                 echo '✓ Installing dependencies on server...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${DEPLOY_USER}@${DEPLOY_SERVER} "
                             cd ${DEPLOY_PATH}
                             npm ci --production
                             echo '✓ Dependencies installed'
@@ -140,7 +135,7 @@ EOF"
                 echo '✓ Restarting application with PM2...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} << 'ENDSSH'
+                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${DEPLOY_USER}@${DEPLOY_SERVER} << 'ENDSSH'
                             cd /var/www/html/public_html/nia_hrms_backend_uat
                             
                             # Check if PM2 process exists
