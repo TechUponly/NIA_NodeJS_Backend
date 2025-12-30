@@ -92,7 +92,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=nia_hrms_uat
 DB_USER=root
-DB_PASSWORD=YOUR_MYSQL_PASSWORD_HERE
+DB_PASSWORD=root123"
 
 # JWT Configuration
 JWT_SECRET=nia_hrms_uat_secret_key_change_this_to_something_secure_32_chars_minimum
