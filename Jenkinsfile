@@ -33,16 +33,44 @@ pipeline {
                 echo '✓ Deploying to server...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        # Sync files to server
                         rsync -avz --delete \
                             --exclude 'node_modules' \
                             --exclude '.git' \
                             --exclude '.env' \
                             --exclude 'logs' \
                             --exclude '*.log' \
+                            --exclude 'Announcement/*' \
+                            --exclude 'admin/Upload/*' \
+                            --exclude 'admin/leave_docs/*' \
+                            --exclude 'uploads/*' \
                             ./ ${DEPLOY_USER}@${DEPLOY_SERVER}:${DEPLOY_PATH}/
                         
                         echo "✓ Files deployed successfully"
+                    '''
+                }
+            }
+        }
+        
+        stage('Create Required Directories') {
+            steps {
+                echo '✓ Creating required directories...'
+                sshagent(credentials: ['azure-uat-ssh']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                            cd ${DEPLOY_PATH}
+                            
+                            # Create all required directories
+                            mkdir -p logs
+                            mkdir -p Announcement
+                            mkdir -p admin/Upload
+                            mkdir -p admin/leave_docs
+                            mkdir -p uploads/leave_docs
+                            
+                            # Set proper permissions
+                            chmod 755 Announcement admin/Upload admin/leave_docs uploads/leave_docs
+                            
+                            echo '✓ All directories created'
+                        "
                     '''
                 }
             }
@@ -54,29 +82,37 @@ pipeline {
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "cat > ${DEPLOY_PATH}/.env << 'EOF'
+# Node Environment
 NODE_ENV=production
 PORT=3002
+HOST=0.0.0.0
 
-# MySQL Database Configuration (Docker)
+# MySQL Database Configuration (Docker container: mysql-uat)
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=nia_hrms_uat
 DB_USER=root
-DB_PASSWORD=your_mysql_password
+DB_PASSWORD=YOUR_MYSQL_PASSWORD_HERE
 
 # JWT Configuration
-JWT_SECRET=your_jwt_secret_change_this_in_production
+JWT_SECRET=nia_hrms_uat_secret_key_change_this_to_something_secure_32_chars_minimum
 JWT_EXPIRES_IN=24h
 
 # Application URLs
 APP_URL=https://uponly.duckdns.org/nia_hrms_uat/api
 FRONTEND_URL=https://uponly.duckdns.org/nia_hrms_uat
 
-# CORS
+# CORS Configuration
 CORS_ORIGIN=https://uponly.duckdns.org
 
 # Logging
 LOG_LEVEL=info
+
+# Email Configuration (if needed)
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@gmail.com
+# SMTP_PASSWORD=your-app-password
 EOF"
                         echo "✓ Environment file created"
                     '''
@@ -89,19 +125,11 @@ EOF"
                 echo '✓ Installing dependencies on server...'
                 sshagent(credentials: ['azure-uat-ssh']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "cd ${DEPLOY_PATH} && npm ci --production"
-                        echo "✓ Dependencies installed"
-                    '''
-                }
-            }
-        }
-        
-        stage('Database Migration') {
-            steps {
-                echo '✓ Running database migrations...'
-                sshagent(credentials: ['azure-uat-ssh']) {
-                    sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "cd ${DEPLOY_PATH} && npm run migrate || echo 'No migrations to run'"
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                            cd ${DEPLOY_PATH}
+                            npm ci --production
+                            echo '✓ Dependencies installed'
+                        "
                     '''
                 }
             }
@@ -121,9 +149,10 @@ EOF"
                                 pm2 reload nia-hrms-backend-uat --update-env
                             else
                                 echo "▶ Starting new PM2 process..."
-                                pm2 start server.js --name nia-hrms-backend-uat \
+                                pm2 start src/app.js --name nia-hrms-backend-uat \
                                     --instances 2 \
-                                    --max-memory-restart 500M
+                                    --max-memory-restart 500M \
+                                    --env production
                                 pm2 save
                             fi
                             
@@ -133,7 +162,12 @@ EOF"
                             pm2 list
                             echo "==================================="
                             echo ""
-                            pm2 logs nia-hrms-backend-uat --lines 20 --nostream
+                            
+                            # Wait for app to start
+                            sleep 3
+                            
+                            # Show logs
+                            pm2 logs nia-hrms-backend-uat --lines 30 --nostream
 ENDSSH
                     '''
                 }
@@ -146,15 +180,21 @@ ENDSSH
                 script {
                     sleep(time: 10, unit: 'SECONDS')
                     sh '''
-                        # Check if application is running
-                        response=$(curl -s -o /dev/null -w "%{http_code}" https://uponly.duckdns.org/nia_hrms_uat/api/health || echo "000")
+                        # Check if application is running on port 3002
+                        echo "Checking local port 3002..."
+                        response_local=$(curl -s -o /dev/null -w "%{http_code}" http://4.240.113.245:3002/ || echo "000")
+                        echo "Local response: $response_local"
                         
-                        if [ "$response" = "200" ]; then
-                            echo "✓ Application is running perfectly (HTTP $response)"
-                        elif [ "$response" = "404" ]; then
-                            echo "⚠ Application is running but /health endpoint not found (HTTP $response)"
+                        # Check through Nginx
+                        echo "Checking through Nginx..."
+                        response_nginx=$(curl -s -o /dev/null -w "%{http_code}" https://uponly.duckdns.org/nia_hrms_uat/api/ || echo "000")
+                        echo "Nginx response: $response_nginx"
+                        
+                        if [ "$response_local" = "200" ] || [ "$response_nginx" = "200" ]; then
+                            echo "✓ Application is running successfully"
                         else
-                            echo "⚠ WARNING: Application may not be running properly (HTTP $response)"
+                            echo "⚠ WARNING: Application may not be responding properly"
+                            echo "Local: $response_local, Nginx: $response_nginx"
                         fi
                     '''
                 }
@@ -164,19 +204,29 @@ ENDSSH
     
     post {
         success {
-            echo '=================================='
+            echo '===================================='
             echo '✓ BACKEND DEPLOYMENT SUCCESSFUL!'
-            echo '=================================='
+            echo '===================================='
             echo 'Application: nia-hrms-backend-uat'
             echo 'Location: /var/www/html/public_html/nia_hrms_backend_uat'
-            echo 'URL: https://uponly.duckdns.org/nia_hrms_uat/api'
+            echo 'Entry Point: src/app.js'
             echo 'Port: 3002'
-            echo '=================================='
+            echo ''
+            echo 'URLs:'
+            echo '  Direct: http://4.240.113.245:3002/'
+            echo '  Public: https://uponly.duckdns.org/nia_hrms_uat/api/'
+            echo ''
+            echo 'Check logs: pm2 logs nia-hrms-backend-uat'
+            echo '===================================='
         }
         failure {
-            echo '=================================='
+            echo '===================================='
             echo '✗ BACKEND DEPLOYMENT FAILED!'
-            echo '=================================='
+            echo '===================================='
+            echo 'Check Jenkins console output for errors'
+            echo 'SSH to server and check:'
+            echo '  pm2 logs nia-hrms-backend-uat'
+            echo '  cat /var/www/html/public_html/nia_hrms_backend_uat/.env'
         }
         always {
             cleanWs()
