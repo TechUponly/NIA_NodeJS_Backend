@@ -643,6 +643,37 @@ const changePasswordService = async (emp_id, old_password, new_password) => {
   }
 };
 
+const getTeamMembersByManagerId = async (managerId) => {
+  try {
+    const query = `
+      SELECT 
+        emp_id,
+        usercode,
+        ename,
+        email,
+        official_mail,
+        post as designation,
+        department,
+        mno as mobile,
+        profileimg,
+        passphoto,
+        joindate,
+        employee_type,
+        active_inactive_status
+      FROM employee 
+      WHERE reporting_manager = ? 
+      AND active_inactive_status = 'Active' 
+      AND emp_id != ? -- Exclude the manager themselves if they list themselves
+    `;
+
+    // We pass managerId twice: once for the check, once to exclude self
+    const [rows] = await pool.execute(query, [managerId, managerId]);
+    return rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
 module.exports = {
   getEmployees,
   getEmployeeCounts,
@@ -663,4 +694,5 @@ module.exports = {
   updateEmployeeDocs,
   getEmployeeById,
   changePasswordService,
+  getTeamMembersByManagerId,
 };

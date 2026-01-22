@@ -252,6 +252,7 @@ router.post(
   employeeController.getEmployeesByDepartment
 );
 router.post("/change-password", employeeController.changePassword);
+router.post('/get-my-team', employeeController.getMyTeamList);
 
 // 404 handler for API routes
 router.use("*", (req, res) => {
