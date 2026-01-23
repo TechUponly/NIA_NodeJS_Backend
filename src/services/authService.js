@@ -11,11 +11,10 @@ class AuthService {
   async authenticateUser(usercode, password, userType) {
     try {
       const employeeQuery = `
-        SELECT *, 
-               getReportingNameByEmpID(emp_id) as reporting_manager,
-               getBranchByEmpID(emp_id) as branch_location 
-        FROM employee 
-        WHERE usercode = ? AND password = ? AND user_type = ?
+        SELECT e.*, 
+               (SELECT m.ename FROM employee m WHERE m.emp_id = e.reporting_manager) as reporting_manager_name
+        FROM employee e
+        WHERE e.usercode = ? AND e.password = ? AND e.user_type = ?
       `;
 
       const [employeeRows] = await pool.execute(employeeQuery, [
@@ -98,11 +97,10 @@ class AuthService {
   async getUserProfile(empId) {
     try {
       const profileQuery = `
-        SELECT *, 
-               getReportingNameByEmpID(emp_id) as reporting_manager,
-               getBranchByEmpID(emp_id) as branch_location 
-        FROM employee 
-        WHERE emp_id = ?
+        SELECT e.*, 
+               (SELECT m.ename FROM employee m WHERE m.emp_id = e.reporting_manager) as reporting_manager_name
+        FROM employee e
+        WHERE e.emp_id = ?
       `;
 
       const [rows] = await pool.execute(profileQuery, [empId]);
@@ -177,12 +175,12 @@ class AuthService {
       admin_type: employee.admin_type || "",
       marital_status: employee.marital_status || "",
       aadhar: employee.aadhar || "",
-      remanager: employee.reporting_manager || "N/A",
+      remanager: employee.reporting_manager_name || employee.reporting_manager || "N/A",
       team_access: teamAccess.map((id) => id.toString()),
       dob: employee.dob || "",
       department: employee.department || "",
       company_name: employee.company_name || "",
-      branch_code: employee.branch_location || "",
+      branch_code: employee.branch || "",
       hr_policies_check: employee.hr_policies_check,
     };
   }
@@ -289,7 +287,7 @@ class AuthService {
       throw new Error(`Session validation failed: ${error.message}`);
     }
   }
-// ... (keep all your existing code above)
+  // ... (keep all your existing code above)
 
   /**
    * ============================================
@@ -305,11 +303,10 @@ class AuthService {
   async findEmployeeByUsercodeOnly(usercode) {
     try {
       const employeeQuery = `
-        SELECT *, 
-               getReportingNameByEmpID(emp_id) as reporting_manager,
-               getBranchByEmpID(emp_id) as branch_location 
-        FROM employee 
-        WHERE usercode = ?
+        SELECT e.*, 
+               (SELECT m.ename FROM employee m WHERE m.emp_id = e.reporting_manager) as reporting_manager_name
+        FROM employee e
+        WHERE e.usercode = ?
       `;
 
       const [employeeRows] = await pool.execute(employeeQuery, [usercode]);
@@ -406,7 +403,7 @@ class AuthService {
       address: employee.address || '',
       bgrp: employee.bgrp || '',
       state: employee.state || '',
-      Branch: employee.city || employee.branch_location || '',
+      Branch: employee.city || employee.branch || '',
       profileimg: employee.passphoto || '',
       gender: employee.gender || '',
       mobile_app_level: employee.mobile_app_level || '',
@@ -418,7 +415,7 @@ class AuthService {
       admin_portal: employee.admin_portal || '',
       department: employee.department || '',
       company_name: employee.company_name || '',
-      reporting_manager: employee.reporting_manager || 'N/A'
+      reporting_manager: employee.reporting_manager_name || employee.reporting_manager || 'N/A'
     };
   }
 
@@ -529,6 +526,69 @@ class AuthService {
     }
   }
 
+  /**
+   * Find employee by usercode and user_type (no password check)
+   * @param {string} usercode - User code
+   * @param {string} userType - User type
+   * @returns {Object|null} - User data or null if not found
+   */
+  async findEmployeeByUsercodeAndType(usercode, userType) {
+    try {
+      const employeeQuery = `
+        SELECT e.*, 
+               (SELECT m.ename FROM employee m WHERE m.emp_id = e.reporting_manager) as reporting_manager_name
+        FROM employee e
+        WHERE e.usercode = ? AND e.user_type = ?
+      `;
+
+      const [employeeRows] = await pool.execute(employeeQuery, [
+        usercode,
+        userType,
+      ]);
+
+      if (employeeRows.length === 0) {
+        return null;
+      }
+
+      return employeeRows[0];
+    } catch (error) {
+      throw new Error(`Failed to find employee by user type: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process login bypass (no password)
+   * @param {string} usercode - User code
+   * @param {string} userType - User type
+   * @param {string} fcmToken - FCM token (optional)
+   * @returns {Object|null} - Login response or null if failed
+   */
+  async processLoginByUserType(usercode, userType, fcmToken = null) {
+    try {
+      // Authenticate user (bypass password)
+      const employee = await this.findEmployeeByUsercodeAndType(
+        usercode,
+        userType
+      );
+
+      if (!employee) {
+        return null; // Will trigger "status": "not found"
+      }
+
+      // Get team access levels
+      const teamAccess = await this.getTeamAccessLevels();
+
+      // Update FCM token if provided
+      if (fcmToken) {
+        await this.updateFCMToken(employee.emp_id, fcmToken);
+      }
+
+      // Format and return response
+      return this.formatUserResponse(employee, teamAccess);
+    } catch (error) {
+      throw new Error(`Login bypass process failed: ${error.message}`);
+    }
+  }
 }
 
 module.exports = new AuthService();

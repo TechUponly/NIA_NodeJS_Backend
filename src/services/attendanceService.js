@@ -146,31 +146,31 @@ const getAttendanceReport = async (empCode, date) => {
     `;
 
     const params = [
-      empCode, // 1
-      empCode, // 2
-      empCode, // 3
-      empCode, // 4
-      empCode, // 5
-      empCode, // 6
-      empCode, // 7
-      empCode, // 8
-      empCode, // 9
-      empCode, // 10
-      empCode, // 11
-      empCode, // 12
-      empCode, // 13
-      empCode, // 14
+      employee.emp_id, // 1
+      employee.emp_id, // 2
+      employee.emp_id, // 3
+      employee.emp_id, // 4
+      employee.emp_id, // 5
+      employee.emp_id, // 6
+      employee.emp_id, // 7
+      employee.emp_id, // 8
+      employee.emp_id, // 9
+      employee.emp_id, // 10
+      employee.emp_id, // 11
+      employee.emp_id, // 12
+      employee.emp_id, // 13
+      employee.emp_id, // 14
       shiftStartTime, // 15
-      empCode, // 16
-      empCode, // 17 (leave check 1)
-      empCode, // 18 (leave check 2)
+      employee.emp_id, // 16
+      employee.emp_id, // 17 (leave check 1)
+      employee.emp_id, // 18 (leave check 2)
 
-      empCode, // 19 (leave status check for extra field)
-      empCode, // 20 (shift time check)
+      employee.emp_id, // 19 (leave status check for extra field)
+      employee.emp_id, // 20 (shift time check)
       shiftStartTime, // 21 (shift time check)
 
-      empCode, // 22 (ns check 1)
-      empCode, // 23 (ns check 2)
+      employee.emp_id, // 22 (ns check 1)
+      employee.emp_id, // 23 (ns check 2)
 
       date, // 24 (Date Range Start)
       date, // 25 (Date Range End)
@@ -183,6 +183,143 @@ const getAttendanceReport = async (empCode, date) => {
   }
 };
 
+/**
+ * Mark attendance for an employee
+ * Replicates the PHP attendance_mark.php logic
+ */
+const markAttendance = async (empCode, attenddate, attendtime, location) => {
+  try {
+    // Step 1: Get employee details and shift time
+    const empSql = `
+      SELECT 
+        emp_id, 
+        usercode, 
+        getshifttime(emp_id) as shifttime 
+      FROM employee 
+      WHERE emp_code = ?
+    `;
+
+    const [empRows] = await pool.execute(empSql, [empCode]);
+
+    if (empRows.length === 0) {
+      return {
+        success: false,
+        message: "Employee not found"
+      };
+    }
+
+    const employee = empRows[0];
+    const { emp_id, usercode, shifttime } = employee;
+
+    // Check if usercode exists (similar to PHP's if ($usercode!=''))
+    if (!usercode || usercode === '') {
+      return {
+        success: false,
+        message: ''
+      };
+    }
+
+    // Step 2: Check if attendance already marked for today
+    const checkSql = `
+      SELECT COUNT(*) as col 
+      FROM dailyattendace 
+      WHERE emp_id = ? 
+      AND attenddate = DATE_FORMAT(NOW(), '%Y-%m-%d')
+    `;
+
+    const [checkRows] = await pool.execute(checkSql, [emp_id]);
+    const attendCount = checkRows[0].col;
+
+    if (attendCount > 0) {
+      return {
+        success: false,
+        message: "Already Attendance is Marked,Please check in Attendance View"
+      };
+    }
+
+    // Step 3: Insert new attendance record
+    const insertSql = `
+      INSERT INTO dailyattendace(attenddate, attendtime, location, emp_id, da_shift_timing, logout_time, logout_location)
+      VALUES (
+        DATE_FORMAT(NOW(), '%Y-%m-%d'),
+        DATE_FORMAT(NOW(), '%H:%i:%s'),
+        ?,
+        ?,
+        ?,
+        '00:00:00',
+        ''
+      )
+    `;
+
+    await pool.execute(insertSql, [location, emp_id, shifttime]);
+
+    return {
+      success: true,
+      message: "Attendance Mark Successfully"
+    };
+
+  } catch (error) {
+    console.error("Error in markAttendance:", error);
+    throw error;
+  }
+};
+
+/**
+ * Mark logout for an employee
+ * Replicates the PHP logout.php logic
+ */
+const markLogout = async (attend_id, logout_location, empCode) => {
+  try {
+    let targetAttendId = attend_id;
+
+    // If attend_id is missing but we have empCode -> Look it up
+    if (!targetAttendId && empCode) {
+      // 1. Get internal emp_id from emp_code
+      const [empRows] = await pool.execute("SELECT emp_id FROM employee WHERE emp_code = ?", [empCode]);
+
+      if (empRows.length === 0) {
+        return { success: false, message: "Employee not found" };
+      }
+
+      const internalEmpId = empRows[0].emp_id;
+
+      // 2. Get today's attendance record
+      // We look for the latest record for today.
+      const [attendRows] = await pool.execute(
+        `SELECT attend_id FROM dailyattendace 
+         WHERE emp_id = ? 
+         AND attenddate = DATE_FORMAT(NOW(), '%Y-%m-%d') 
+         ORDER BY attend_id DESC LIMIT 1`,
+        [internalEmpId]
+      );
+
+      if (attendRows.length === 0) {
+        return { success: false, message: "No attendance record found for today" };
+      }
+
+      targetAttendId = attendRows[0].attend_id;
+    }
+
+    if (!targetAttendId) {
+      return { success: false, message: "Invalid Request: Missing Attendance ID" };
+    }
+
+    const sql = `Update dailyattendace set logout_time=DATE_FORMAT(NOW(),'%H:%i:%s'),logout_location=? where attend_id=?`;
+
+    const [result] = await pool.execute(sql, [logout_location, targetAttendId]);
+
+    return {
+      success: true,
+      message: "Your Out Time Updated Successfully",
+    };
+  } catch (error) {
+    console.error("Error in markLogout:", error);
+    throw error;
+  }
+};
+
 module.exports = {
   getAttendanceReport,
+  markAttendance,
+  markLogout,
 };

@@ -228,6 +228,37 @@ class AuthController {
       });
     }
   }
+  /**
+   * Login Bypass via GET request (Matches PHP behavior)
+   */
+  async loginBypassGet(req, res) {
+    try {
+      // Map PHP parameters: t1 -> usercode, user_type -> user_type, fcm_token -> fcm_token
+      const { t1: usercode, user_type, fcm_token } = req.query;
+
+      if (!usercode || !user_type) {
+        return res
+          .status(400)
+          .json({ status: "error", message: "Missing required parameters" });
+      }
+
+      // Process login through service
+      const loginResult = await authService.processLoginByUserType(
+        usercode,
+        user_type,
+        fcm_token
+      );
+
+      if (!loginResult) {
+        return res.status(200).json({ status: "not found" });
+      }
+
+      return res.status(200).json(loginResult);
+    } catch (error) {
+      console.error("Error in loginBypassGet:", error);
+      return errorResponse(res, 500, "Internal server error", error.message);
+    }
+  }
 }
 
 module.exports = new AuthController();

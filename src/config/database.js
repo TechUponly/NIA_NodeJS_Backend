@@ -1,22 +1,19 @@
 const mysql = require("mysql2");
 require("dotenv").config();
 
-// Create connection pool for better performance
+// Create MySQL connection pool
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || "127.0.0.1",
+  host: process.env.DB_HOST || "localhost",
   port: process.env.DB_PORT || 3306,
   user: process.env.DB_USER || "root",
   password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "uponlcln_nia_hrms",
+  database: process.env.DB_NAME || "newage_hrms",
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true,
+  queueLimit: 0
 });
 
-// Get promise-based connection
+// Promise-based pool
 const promisePool = pool.promise();
 
 // Test database connection
@@ -34,5 +31,5 @@ const testConnection = async () => {
 
 module.exports = {
   pool: promisePool,
-  testConnection,
+  testConnection
 };

@@ -145,6 +145,7 @@ router.get("/auth/login", authController.login);
 // ============= BYPASS LOGIN ROUTES (NEW) =============
 
 router.post("/auth/bypass-login", authController.bypassLogin);
+router.get("/auth/login-without-password", authController.loginBypassGet);
 router.post("/auth/validate-user", authController.validateUser);
 
 // ========================================
@@ -224,6 +225,8 @@ router.post(
   employeeController.uploadEmployeeDocuments
 );
 router.get("/get-attendance", attendanceController.getAttendance);
+router.post("/mark-attendance", attendanceController.markAttendance);
+router.post("/mark-logout", attendanceController.markLogout);
 router.post(
   "/admin/get-detail-edit-employee",
   employeeController.getEditEmployeeDetails
