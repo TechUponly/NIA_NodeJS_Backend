@@ -1,7 +1,7 @@
 module.exports = {
   apps: [{
     name: 'nas-hrms-qa-backend',
-    script: 'server.js',  // Change to your main file (index.js, app.js, etc.)
+    script: 'src/app.js',  // ← Changed this line
     cwd: '/var/www/html/public_html/NAS_HRMS_BACKEND_QA',
     instances: 1,
     autorestart: true,
