@@ -5,7 +5,7 @@ const getCompanyList = async () => {
   // If you want to fetch from DB later, you can change this.
   // For now, matching your PHP hardcoded values:
   const companies = [
-    { id: 1, name: "National Insurance Academy" }
+    { id: 1, name: "New Age secure" }
   ];
   return companies;
 };
