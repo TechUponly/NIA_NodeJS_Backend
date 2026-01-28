@@ -238,11 +238,12 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
     }
 
     // Step 3: Insert new attendance record
+    // Use CONVERT_TZ to convert server time to Indian Standard Time (IST, UTC+05:30)
     const insertSql = `
       INSERT INTO dailyattendace(attenddate, attendtime, location, emp_id, da_shift_timing, logout_time, logout_location)
       VALUES (
-        DATE_FORMAT(NOW(), '%Y-%m-%d'),
-        DATE_FORMAT(NOW(), '%H:%i:%s'),
+        DATE_FORMAT(CONVERT_TZ(NOW(), @@session.time_zone, '+05:30'), '%Y-%m-%d'),
+        DATE_FORMAT(CONVERT_TZ(NOW(), @@session.time_zone, '+05:30'), '%H:%i:%s'),
         ?,
         ?,
         ?,
@@ -304,7 +305,8 @@ const markLogout = async (attend_id, logout_location, empCode) => {
       return { success: false, message: "Invalid Request: Missing Attendance ID" };
     }
 
-    const sql = `Update dailyattendace set logout_time=DATE_FORMAT(NOW(),'%H:%i:%s'),logout_location=? where attend_id=?`;
+    // Use CONVERT_TZ to convert server time to Indian Standard Time (IST, UTC+05:30) in 24-hour format
+    const sql = `Update dailyattendace set logout_time=DATE_FORMAT(CONVERT_TZ(NOW(), @@session.time_zone, '+05:30'),'%H:%i:%s'),logout_location=? where attend_id=?`;
 
     const [result] = await pool.execute(sql, [logout_location, targetAttendId]);
 

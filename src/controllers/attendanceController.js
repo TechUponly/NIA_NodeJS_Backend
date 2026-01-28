@@ -42,20 +42,6 @@ const getAttendance = async (req, res) => {
  */
 const markAttendance = async (req, res) => {
   try {
-    // User-agent validation (replicate PHP logic)
-    const userAgent = req.headers['user-agent'] || '';
-
-    // Block requests from browsers and common API testing tools
-    const blockedAgents = ['Mozilla', 'Chrome', 'Safari', 'PostmanRuntime', 'Trident', 'Thunder Client', 'MSIE'];
-    const isBlocked = blockedAgents.some(agent => userAgent.includes(agent));
-
-    if (isBlocked) {
-      return res.status(403).json({
-        message: "Access Denied: Unauthorized Request."
-      });
-    }
-
-    // Get parameters from query string (matching PHP $_GET)
     const { emp_id, attenddate, attendtime, location } = req.query;
 
     if (!emp_id || !location) {
@@ -64,8 +50,6 @@ const markAttendance = async (req, res) => {
         message: 'Missing required parameters: emp_id and location'
       });
     }
-
-    // Call service to mark attendance
     const result = await attendanceService.markAttendance(
       emp_id,
       attenddate,
