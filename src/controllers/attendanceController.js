@@ -8,15 +8,21 @@ const getAttendance = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Missing emp_id or date' });
     }
 
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token, Authorization, Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+
     const data = await attendanceService.getAttendanceReport(emp_id, date);
 
     if (data.length > 0) {
-      // Logic to convert string "True"/"False" to booleans if needed
-      // (Though my SQL above returns strings directly, we map it for frontend compatibility)
       const formattedData = data.map(record => {
-        // Example conversion if your SQL returns specific boolean strings
-        // For now, passing data as is matches the PHP fetch_all
-        return record;
+        // Convert "True"/"False" strings to booleans
+        const newRecord = { ...record };
+        Object.keys(newRecord).forEach(key => {
+            if (newRecord[key] === "True") newRecord[key] = true;
+            if (newRecord[key] === "False") newRecord[key] = false;
+        });
+        return newRecord;
       });
 
       res.status(200).json({
