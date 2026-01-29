@@ -19,8 +19,8 @@ const getAttendance = async (req, res) => {
         // Convert "True"/"False" strings to booleans
         const newRecord = { ...record };
         Object.keys(newRecord).forEach(key => {
-            if (newRecord[key] === "True") newRecord[key] = true;
-            if (newRecord[key] === "False") newRecord[key] = false;
+          if (newRecord[key] === "True") newRecord[key] = true;
+          if (newRecord[key] === "False") newRecord[key] = false;
         });
         return newRecord;
       });
@@ -48,7 +48,7 @@ const getAttendance = async (req, res) => {
  */
 const markAttendance = async (req, res) => {
   try {
-    const { emp_id, attenddate, attendtime, location } = req.query;
+    const { emp_id, attenddate, attendtime, location, latitude, longitude } = req.query;
 
     if (!emp_id || !location) {
       return res.status(400).json({
@@ -60,12 +60,18 @@ const markAttendance = async (req, res) => {
       emp_id,
       attenddate,
       attendtime,
-      location
+      location,
+      latitude,
+      longitude
     );
 
-    // Return response matching PHP format
+    // Return response with location verification details
     return res.status(200).json({
-      message: result.message
+      message: result.message,
+      latitude_used: result.latitude_used || null,
+      longitude_used: result.longitude_used || null,
+      office_name: result.office_name || null,
+      office_coords: result.office_coords || null
     });
 
   } catch (error) {
@@ -87,16 +93,23 @@ const markLogout = async (req, res) => {
     const logout_location = req.body.logout_location || req.query.logout_location;
     const emp_id = req.body.emp_id || req.query.emp_id;
 
+    const latitude = req.body.latitude || req.query.latitude;
+    const longitude = req.body.longitude || req.query.longitude;
+
     if (!attend_id && !emp_id) {
       return res.status(200).json({
         message: "Something Went Wrong,Please Try Again",
       });
     }
 
-    const result = await attendanceService.markLogout(attend_id, logout_location, emp_id);
+    const result = await attendanceService.markLogout(attend_id, logout_location, emp_id, latitude, longitude);
 
     return res.status(200).json({
       message: result.message,
+      latitude_used: result.latitude_used || null,
+      longitude_used: result.longitude_used || null,
+      office_name: result.office_name || null,
+      office_coords: result.office_coords || null
     });
   } catch (error) {
     console.error("Error in markLogout:", error);

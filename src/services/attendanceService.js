@@ -9,26 +9,26 @@ const getAttendanceReport = async (empCode, date) => {
     if (empRows.length === 0) return [];
 
     const employee = empRows[0];
-    const internalEmpId = employee.emp_id; 
-    const userCodeForHistory = empCode;  
-    
+    const internalEmpId = employee.emp_id;
+    const userCodeForHistory = empCode;
+
     // Variables from DB
     const isSaturdayWorking = (employee.is_saturday_working || "").trim().toUpperCase();
     const empShiftId = employee.shift_timing;
-    const nsStatus = (employee.ns || "").trim(); 
+    const nsStatus = (employee.ns || "").trim();
 
     // Default Shift
     let shiftStartTime = "10:00:00";
-    let shiftWorkingHours = "09:00:00"; 
+    let shiftWorkingHours = "09:00:00";
 
     // 2. Fetch Shift Timing
     if (empShiftId) {
       const shiftSql = "SELECT start_time, working_hour FROM employee_shift_timing WHERE id = ?";
       const [shiftRows] = await pool.execute(shiftSql, [empShiftId]);
-      
+
       if (shiftRows.length > 0) {
         shiftStartTime = shiftRows[0].start_time;
-        const whRaw = shiftRows[0].working_hour; 
+        const whRaw = shiftRows[0].working_hour;
         // Convert to HH:00:00 format
         shiftWorkingHours = `${String(whRaw).padStart(2, '0')}:00:00`;
       }
@@ -38,29 +38,29 @@ const getAttendanceReport = async (empCode, date) => {
     // PHP Logic for variables:
     // $is_saturday_working == 'YES' -> $saturday_working = " ", $show_check_in_out = " WHEN (DAYOFWEEK(selected_date) = 1) OR "
     // ELSE -> $saturday_working = "WHEN (DAYOFWEEK(selected_date) = 7) THEN 'Mandate Leave' ", $show_check_in_out = " WHEN (DAYOFWEEK(selected_date) = 1 OR DAYOFWEEK(selected_date) = 7) OR "
-    
+
     let saturdayWorkingClause = "";
     let showCheckInOutClause = "";
 
     if (isSaturdayWorking === 'YES') {
-        saturdayWorkingClause = " ";
-        showCheckInOutClause = " WHEN (DAYOFWEEK(selected_date) = 1) OR ";
+      saturdayWorkingClause = " ";
+      showCheckInOutClause = " WHEN (DAYOFWEEK(selected_date) = 1) OR ";
     } else {
-        saturdayWorkingClause = " WHEN (DAYOFWEEK(selected_date) = 7) THEN 'Mandate Leave' ";
-        showCheckInOutClause = " WHEN (DAYOFWEEK(selected_date) = 1 OR DAYOFWEEK(selected_date) = 7) OR ";
+      saturdayWorkingClause = " WHEN (DAYOFWEEK(selected_date) = 7) THEN 'Mandate Leave' ";
+      showCheckInOutClause = " WHEN (DAYOFWEEK(selected_date) = 1 OR DAYOFWEEK(selected_date) = 7) OR ";
     }
 
     // Date Strings for NP (Next Payroll) Calculations
     const dateObj = new Date(date);
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    
 
-    let pm = dateObj.getMonth(); 
+
+    let pm = dateObj.getMonth();
     let py = year;
     if (pm === 0) {
-        pm = 12;
-        py = year - 1;
+      pm = 12;
+      py = year - 1;
     }
     const prevMonth = String(pm).padStart(2, '0');
 
@@ -364,7 +364,7 @@ order by selected_date asc`;
       internalEmpId, // attenddate
       internalEmpId, // attendtime
       internalEmpId, // logout_time
-      
+
       // Total Working Hour Logic
       internalEmpId, internalEmpId, internalEmpId, // Case 1 checks
       internalEmpId, internalEmpId, // Case 1 calc
@@ -471,14 +471,14 @@ order by selected_date asc`;
       internalEmpId, internalEmpId, // working time check
 
       // Show Shift Time
-      internalEmpId, 
+      internalEmpId,
 
       // Show Check In/Out (No params, just injected string logic)
-      
+
       // Extras
       internalEmpId, // show_f2f
       internalEmpId, // show_connected
-      
+
       date, // LAST_DAY param 1
       date  // LAST_DAY param 2
     ];
@@ -491,16 +491,103 @@ order by selected_date asc`;
 };
 
 /**
+ * Calculate distance between two GPS coordinates using Haversine formula
+ * @param {number} lat1 - Latitude of point 1
+ * @param {number} lon1 - Longitude of point 1
+ * @param {number} lat2 - Latitude of point 2
+ * @param {number} lon2 - Longitude of point 2
+ * @returns {number} - Distance in meters
+ */
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000; // Earth's radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in meters
+};
+
+/**
+ * Check if user's GPS coordinates are within any office location bounds
+ * Matches user lat/lng against Latitude1, Latitude2, Longitude1, Longitude2 from office_location table
+ * @param {number} userLat - User's latitude
+ * @param {number} userLng - User's longitude
+ * @returns {Object} - { isWithinBounds: boolean, locationName: string|null, officeLat: object|null, officeLng: object|null }
+ */
+const checkOfficeLocationBounds = async (userLat, userLng) => {
+  try {
+    const locationSql = `
+      SELECT Latitude1, Latitude2, Longitude1, Longitude2, location_name 
+      FROM office_location
+    `;
+
+    const [locations] = await pool.execute(locationSql);
+
+    if (locations.length === 0) {
+      // No office locations defined, allow attendance
+      return { isWithinBounds: true, locationName: null, officeCoords: null };
+    }
+
+    for (const loc of locations) {
+      const lat1 = parseFloat(loc.Latitude1);
+      const lat2 = parseFloat(loc.Latitude2);
+      const lng1 = parseFloat(loc.Longitude1);
+      const lng2 = parseFloat(loc.Longitude2);
+
+      // Determine min/max for latitude and longitude
+      const minLat = Math.min(lat1, lat2);
+      const maxLat = Math.max(lat1, lat2);
+      const minLng = Math.min(lng1, lng2);
+      const maxLng = Math.max(lng1, lng2);
+
+      // Check if user coordinates fall within the bounding box
+      if (userLat >= minLat && userLat <= maxLat &&
+        userLng >= minLng && userLng <= maxLng) {
+        return {
+          isWithinBounds: true,
+          locationName: loc.location_name,
+          officeCoords: {
+            latitude1: lat1,
+            latitude2: lat2,
+            longitude1: lng1,
+            longitude2: lng2
+          }
+        };
+      }
+    }
+
+    // Return the first office location bounds for reference
+    const firstLoc = locations[0];
+    return {
+      isWithinBounds: false,
+      locationName: firstLoc.location_name,
+      officeCoords: {
+        latitude1: parseFloat(firstLoc.Latitude1),
+        latitude2: parseFloat(firstLoc.Latitude2),
+        longitude1: parseFloat(firstLoc.Longitude1),
+        longitude2: parseFloat(firstLoc.Longitude2)
+      }
+    };
+  } catch (error) {
+    console.error("Error checking office location bounds:", error);
+    throw error;
+  }
+};
+
+/**
  * Mark attendance for an employee
  * Replicates the PHP attendance_mark.php logic
  */
-const markAttendance = async (empCode, attenddate, attendtime, location) => {
+const markAttendance = async (empCode, attenddate, attendtime, location, latitude = null, longitude = null) => {
   try {
-    // Step 1: Get employee details and shift time
+    // Step 1: Get employee details, shift time, and mobile_app_level
     const empSql = `
       SELECT 
         emp_id, 
         usercode, 
+        mobile_app_level,
         getshifttime(emp_id) as shifttime 
       FROM employee 
       WHERE emp_code = ?
@@ -516,7 +603,7 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
     }
 
     const employee = empRows[0];
-    const { emp_id, usercode, shifttime } = employee;
+    const { emp_id, usercode, shifttime, mobile_app_level } = employee;
 
     // Check if usercode exists (similar to PHP's if ($usercode!=''))
     if (!usercode || usercode === '') {
@@ -526,7 +613,71 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
       };
     }
 
-    // Step 2: Check if attendance already marked for today
+    // Track coordinates used for response
+    let usedLatitude = null;
+    let usedLongitude = null;
+    let officeName = null;
+
+    // Always try to extract coordinates from location string or separate params
+    let userLat = latitude ? parseFloat(latitude) : null;
+    let userLng = longitude ? parseFloat(longitude) : null;
+
+    // If latitude/longitude not provided separately, try to extract from location string
+    // Location format: "19.082493349058748,73.01471276117357"
+    if ((userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) && location) {
+      const coordPattern = /(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)/;
+      const match = location.match(coordPattern);
+
+      if (match) {
+        const extractedLat = parseFloat(match[1]);
+        const extractedLng = parseFloat(match[2]);
+
+        // Validate extracted coordinates are in valid range
+        if (!isNaN(extractedLat) && !isNaN(extractedLng) &&
+          extractedLat >= -90 && extractedLat <= 90 &&
+          extractedLng >= -180 && extractedLng <= 180) {
+          userLat = extractedLat;
+          userLng = extractedLng;
+        }
+      }
+    }
+
+    // Store the coordinates used
+    usedLatitude = userLat;
+    usedLongitude = userLng;
+
+    // Step 2: Check mobile_app_level for location verification
+    // mobile_app_level = 3 means "Team and 10 AM Login" - requires office location verification
+    if (mobile_app_level === '3' | mobile_app_level === 3 || mobile_app_level === '2' | mobile_app_level === 2) {
+      // Coordinates are REQUIRED for mobile_app_level 3
+      if (userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) {
+        return {
+          success: false,
+          message: "Location coordinates are required for attendance. Please enable GPS.",
+          latitude_used: null,
+          longitude_used: null,
+          office_name: null,
+          office_coords: null
+        };
+      }
+
+      // Check if user is within office location bounds (Latitude1-Latitude2, Longitude1-Longitude2)
+      const locationCheck = await checkOfficeLocationBounds(userLat, userLng);
+      officeName = locationCheck.locationName;
+
+      if (!locationCheck.isWithinBounds) {
+        return {
+          success: false,
+          message: `Out of location - Your coordinates do not match office location bounds.`,
+          latitude_used: usedLatitude,
+          longitude_used: usedLongitude,
+          office_name: locationCheck.locationName,
+          office_coords: locationCheck.officeCoords
+        };
+      }
+    }
+
+    // Step 3: Check if attendance already marked for today
     const checkSql = `
       SELECT COUNT(*) as col 
       FROM dailyattendace 
@@ -540,12 +691,18 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
     if (attendCount > 0) {
       return {
         success: false,
-        message: "Already Attendance is Marked,Please check in Attendance View"
+        message: "Already Attendance is Marked,Please check in Attendance View",
+        latitude_used: usedLatitude,
+        longitude_used: usedLongitude,
+        office_name: officeName
       };
     }
 
-    // Step 3: Insert new attendance record
+    // Step 4: Insert new attendance record
     // Use CONVERT_TZ to convert server time to Indian Standard Time (IST, UTC+05:30)
+    // Store the office name in location field if matched, otherwise use original location
+    const locationToStore = officeName || location;
+
     const insertSql = `
       INSERT INTO dailyattendace(attenddate, attendtime, location, emp_id, da_shift_timing, logout_time, logout_location)
       VALUES (
@@ -559,11 +716,14 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
       )
     `;
 
-    await pool.execute(insertSql, [location, emp_id, shifttime]);
+    await pool.execute(insertSql, [locationToStore, emp_id, shifttime]);
 
     return {
       success: true,
-      message: "Attendance Mark Successfully"
+      message: "Attendance Mark Successfully",
+      latitude_used: usedLatitude,
+      longitude_used: usedLongitude,
+      office_name: officeName
     };
 
   } catch (error) {
@@ -576,50 +736,135 @@ const markAttendance = async (empCode, attenddate, attendtime, location) => {
  * Mark logout for an employee
  * Replicates the PHP logout.php logic
  */
-const markLogout = async (attend_id, logout_location, empCode) => {
+const markLogout = async (attend_id, logout_location, empCode, latitude = null, longitude = null) => {
   try {
     let targetAttendId = attend_id;
+    let mobile_app_level = null;
+    let emp_id = null;
 
-    // If attend_id is missing but we have empCode -> Look it up
-    if (!targetAttendId && empCode) {
-      // 1. Get internal emp_id from emp_code
-      const [empRows] = await pool.execute("SELECT emp_id FROM employee WHERE emp_code = ?", [empCode]);
+    // Logic to determine targetAttendId and mobile_app_level
+    if (empCode) {
+      // Get emp_id and mobile_app_level from emp_code
+      const [empRows] = await pool.execute("SELECT emp_id, mobile_app_level FROM employee WHERE emp_code = ?", [empCode]);
 
       if (empRows.length === 0) {
         return { success: false, message: "Employee not found" };
       }
 
-      const internalEmpId = empRows[0].emp_id;
+      emp_id = empRows[0].emp_id;
+      mobile_app_level = empRows[0].mobile_app_level;
 
-      // 2. Get today's attendance record
-      // We look for the latest record for today.
-      const [attendRows] = await pool.execute(
-        `SELECT attend_id FROM dailyattendace 
-         WHERE emp_id = ? 
-         AND attenddate = DATE_FORMAT(NOW(), '%Y-%m-%d') 
-         ORDER BY attend_id DESC LIMIT 1`,
-        [internalEmpId]
-      );
+      if (!targetAttendId) {
+        // Get today's attendance record
+        const [attendRows] = await pool.execute(
+          `SELECT attend_id FROM dailyattendace 
+           WHERE emp_id = ? 
+           AND attenddate = DATE_FORMAT(NOW(), '%Y-%m-%d') 
+           ORDER BY attend_id DESC LIMIT 1`,
+          [emp_id]
+        );
 
-      if (attendRows.length === 0) {
-        return { success: false, message: "No attendance record found for today" };
+        if (attendRows.length === 0) {
+          return { success: false, message: "No attendance record found for today" };
+        }
+        targetAttendId = attendRows[0].attend_id;
       }
+    } else if (targetAttendId) {
+      // We have attend_id, need to fetch mobile_app_level
+      // First get emp_id from dailyattendace
+      const [attendRows] = await pool.execute("SELECT emp_id FROM dailyattendace WHERE attend_id = ?", [targetAttendId]);
 
-      targetAttendId = attendRows[0].attend_id;
+      if (attendRows.length > 0) {
+        emp_id = attendRows[0].emp_id;
+        // Now get mobile_app_level
+        const [empRows] = await pool.execute("SELECT mobile_app_level FROM employee WHERE emp_id = ?", [emp_id]);
+        if (empRows.length > 0) {
+          mobile_app_level = empRows[0].mobile_app_level;
+        }
+      }
     }
 
     if (!targetAttendId) {
       return { success: false, message: "Invalid Request: Missing Attendance ID" };
     }
 
+    // --- LOCATION VERIFICATION LOGIC (Same as markAttendance) ---
+
+    // Track coordinates used for response
+    let usedLatitude = null;
+    let usedLongitude = null;
+    let officeName = null;
+
+    // Always try to extract coordinates from location string or separate params
+    let userLat = latitude ? parseFloat(latitude) : null;
+    let userLng = longitude ? parseFloat(longitude) : null;
+
+    // If latitude/longitude not provided separately, try to extract from logout_location string
+    if ((userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) && logout_location) {
+      const coordPattern = /(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)/;
+      const match = logout_location.match(coordPattern);
+
+      if (match) {
+        const extractedLat = parseFloat(match[1]);
+        const extractedLng = parseFloat(match[2]);
+
+        if (!isNaN(extractedLat) && !isNaN(extractedLng) &&
+          extractedLat >= -90 && extractedLat <= 90 &&
+          extractedLng >= -180 && extractedLng <= 180) {
+          userLat = extractedLat;
+          userLng = extractedLng;
+        }
+      }
+    }
+
+    usedLatitude = userLat;
+    usedLongitude = userLng;
+
+    // Check mobile_app_level for location verification (Levels 2 and 3)
+    if (mobile_app_level === '3' || mobile_app_level === 3 || mobile_app_level === '2' || mobile_app_level === 2) {
+      // Coordinates are REQUIRED
+      if (userLat === null || userLng === null || isNaN(userLat) || isNaN(userLng)) {
+        return {
+          success: false,
+          message: "Location coordinates are required for logout. Please enable GPS.",
+          latitude_used: null,
+          longitude_used: null,
+          office_name: null,
+          office_coords: null
+        };
+      }
+
+      // Check against office boundaries
+      const locationCheck = await checkOfficeLocationBounds(userLat, userLng);
+      officeName = locationCheck.locationName;
+
+      if (!locationCheck.isWithinBounds) {
+        return {
+          success: false,
+          message: `Out of location - Your coordinates do not match office location bounds.`,
+          latitude_used: usedLatitude,
+          longitude_used: usedLongitude,
+          office_name: locationCheck.locationName,
+          office_coords: locationCheck.officeCoords
+        };
+      }
+    }
+    // --- END LOCATION VERIFICATION LOGIC ---
+
+    const locationToStore = officeName || logout_location;
+
     // Use CONVERT_TZ to convert server time to Indian Standard Time (IST, UTC+05:30) in 24-hour format
     const sql = `Update dailyattendace set logout_time=DATE_FORMAT(CONVERT_TZ(NOW(), @@session.time_zone, '+05:30'),'%H:%i:%s'),logout_location=? where attend_id=?`;
 
-    const [result] = await pool.execute(sql, [logout_location, targetAttendId]);
+    const [result] = await pool.execute(sql, [locationToStore, targetAttendId]);
 
     return {
       success: true,
       message: "Your Out Time Updated Successfully",
+      latitude_used: usedLatitude,
+      longitude_used: usedLongitude,
+      office_name: officeName,
+      office_coords: null // If successful, coords matched, usually we don't return bounds in success but API consistency might require it or null is fine.
     };
   } catch (error) {
     console.error("Error in markLogout:", error);
